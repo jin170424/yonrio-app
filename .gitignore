@@ -1,45 +1,67 @@
 # Miscellaneous
 *.class
 *.log
+*.lock
 *.pyc
 *.swp
 .DS_Store
 .atom/
-.build/
 .buildlog/
 .history
 .svn/
-.swiftpm/
 migrate_working_dir/
 
-# IntelliJ related
+# IntelliJ / Android Studio
 *.iml
 *.ipr
 *.iws
 .idea/
 
-# The .vscode folder contains launch configuration and tasks you configure in
-# VS Code which you may wish to be included in version control, so this line
-# is commented out by default.
+# Visual Studio Code
+# チームで設定(settings.json)を共有するため、.vscodeフォルダ自体はGit管理下に置きます。
+# ただし、個人の履歴などは除外したい場合があるため、必要に応じて調整しますが
+# 基本的にはコメントアウト（＝Git管理対象にする）のままでOKです。
 #.vscode/
 
-# Flutter/Dart/Pub related
-**/doc/api/
-**/ios/Flutter/.last_build_id
+# Flutter / Dart
 .dart_tool/
+.flutter-plugins
 .flutter-plugins-dependencies
+.packages
 .pub-cache/
 .pub/
 /build/
-/coverage/
+
+# FVM (Flutter Version Management) ★ここが重要
+# 設定ファイル(fvm_config.json)は共有し、重たいSDK本体は無視します
+.fvm/flutter_sdk
+
+# Android specific ★ここを強化
+# local.propertiesには個人のPCパスが含まれるため絶対に除外が必要です
+**/android/local.properties
+**/android/**/generated/
+**/android/**/gradle-wrapper.jar
+**/android/.gradle
+**/android/captures/
+**/android/gradlew
+**/android/gradlew.bat
+**/android/app/debug
+**/android/app/profile
+**/android/app/release
+
+# iOS specific ★ここを強化
+# ビルドごとに変わるファイルを除外します
+**/ios/Flutter/Generated.xcconfig
+**/ios/Flutter/flutter_export_environment.sh
+**/ios/Flutter/app.flx
+**/ios/Flutter/app.zip
+**/ios/Flutter/bs.diff
+**/ios/Flutter/flutter_assets/
+**/ios/ServiceDefinitions.json
+**/ios/Runner/GeneratedPluginRegistrant.*
 
 # Symbolication related
 app.*.symbols
 
 # Obfuscation related
 app.*.map.json
-
-# Android Studio will place build artifacts here
-/android/app/debug
-/android/app/profile
-/android/app/release
