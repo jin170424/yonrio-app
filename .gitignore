@@ -18,10 +18,14 @@ migrate_working_dir/
 .idea/
 
 # Visual Studio Code
-# チームで設定(settings.json)を共有するため、.vscodeフォルダ自体はGit管理下に置きます。
-# ただし、個人の履歴などは除外したい場合があるため、必要に応じて調整しますが
-# 基本的にはコメントアウト（＝Git管理対象にする）のままでOKです。
-#.vscode/
+# チームで統一設定(settings.jsonなど)を共有するためフォルダは許可し、
+# キャッシュや個人の履歴ファイルのみを除外します。
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+*.code-workspace
 
 # Flutter / Dart
 .dart_tool/
@@ -32,25 +36,30 @@ migrate_working_dir/
 .pub/
 /build/
 
-# FVM (Flutter Version Management) ★ここが重要
-# 設定ファイル(fvm_config.json)は共有し、重たいSDK本体は無視します
+# FVM (Flutter Version Management)
+# バージョン情報(fvm_config.json)は共有し、重たいSDK本体は無視します
 .fvm/flutter_sdk
 
-# Android specific ★ここを強化
-# local.propertiesには個人のPCパスが含まれるため絶対に除外が必要です
+# Environment Variables (Security)
+# APIキーなどを記載するファイル。絶対にコミットしないこと
+.env
+.env.*
+
+# Android specific
+# local.propertiesには個人のPCパスが含まれるため絶対に除外が必要
 **/android/local.properties
 **/android/**/generated/
-**/android/**/gradle-wrapper.jar
 **/android/.gradle
 **/android/captures/
-**/android/gradlew
-**/android/gradlew.bat
 **/android/app/debug
 **/android/app/profile
 **/android/app/release
 
-# iOS specific ★ここを強化
-# ビルドごとに変わるファイルを除外します
+# 【重要】Androidビルドツール関連（gradlewなど）は
+# 以前のリストから「削除」しました。
+# これらはチーム全員がビルドするためにGit管理対象である必要があります。
+
+# iOS specific
 **/ios/Flutter/Generated.xcconfig
 **/ios/Flutter/flutter_export_environment.sh
 **/ios/Flutter/app.flx
@@ -59,6 +68,10 @@ migrate_working_dir/
 **/ios/Flutter/flutter_assets/
 **/ios/ServiceDefinitions.json
 **/ios/Runner/GeneratedPluginRegistrant.*
+
+# iOS CocoaPods
+# Podfileは共有しますが、Podsフォルダ自体は各自でインストールするため除外します
+**/ios/Pods/
 
 # Symbolication related
 app.*.symbols
