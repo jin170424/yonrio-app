@@ -38,7 +38,6 @@ migrate_working_dir/
 
 # FVM (Flutter Version Management)
 # バージョン情報(fvm_config.json)は共有し、重たいSDK本体は無視します
-.fvm/flutter_sdk
 
 # Environment Variables (Security)
 # APIキーなどを記載するファイル。絶対にコミットしないこと
@@ -78,3 +77,6 @@ app.*.symbols
 
 # Obfuscation related
 app.*.map.json
+
+# FVM Version Cache
+.fvm/
