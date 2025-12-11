@@ -1,7 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-void main() {
+// 💡 修正: main関数を非同期にし、SharedPreferencesを初期化します
+void main() async {
+  // Flutterエンジンとの連携を保証
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // SharedPreferencesのインスタンスを事前に取得し、初期化が完了するのを待つ
+  await SharedPreferences.getInstance();
+
   runApp(const MyApp());
 }
 
@@ -32,40 +39,105 @@ class _LoginPageState extends State<LoginPage> {
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
 
-  // ログインボタンが押されたときの処理
-  void _login() {
-    // フォームのバリデーションを実行
+  // ===================================================================
+  // 💡 挿入箇所 (1) コントローラー定義の直後
+  // ===================================================================
+  // 追加: テスト用認証情報
+  static const String _testEmail = 'test@example.com';
+  static const String _testPassword = 'password123';
+
+  // 追加: テストアカウントを作成して自動ログインするヘルパー
+  Future<void> _createTestAccountAndLogin() async {
+    final prefs = await SharedPreferences.getInstance();
+    // 登録処理と同じロジックでテストアカウントをローカルに作成
+    await prefs.setString(_testEmail, _testPassword);
+
+    // フィールドにセットしてログイン処理を呼ぶ　あとで消してもいい
+    _emailController.text = _testEmail;
+    _passwordController.text = _testPassword;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('テストアカウント作成: $_testEmail / $_testPassword')),
+    );
+
+    // 登録処理完了を待ってから、ログイン処理を呼び出す
+    await Future.delayed(const Duration(milliseconds: 200));
+    _login();
+  }
+  // ===================================================================
+
+  // 💡 追加: 画面遷移のヘルパーメソッド
+  void _navigateToHomeScreen(BuildContext context, String email) {
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(builder: (context) => HomeScreen(email: email)),
+    );
+  }
+
+  // 💡 変更: ログインボタンが押されたときの処理 (SharedPreferencesと照合)
+  void _login() async {
     if (_formKey.currentState!.validate()) {
-      // バリデーションが成功した場合の処理
-      final email = _emailController.text;
-      final password = _passwordController.text;
+      final prefs = await SharedPreferences.getInstance();
+      final inputEmail = _emailController.text;
+      final inputPassword = _passwordController.text;
 
-      // 実際にはここで認証APIを呼び出すなどの処理を行います
-      print('ログイン試行:');
-      print('メールアドレス: $email');
-      print('パスワード: $password');
+      final storedPassword = prefs.getString(inputEmail);
 
-      // 成功メッセージを表示
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text('ログインに成功しました (仮)')));
+      if (storedPassword != null && storedPassword == inputPassword) {
+        // 認証成功
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('✅ ログイン成功!'),
+            backgroundColor: Colors.blue,
+          ),
+        );
+        print('ログイン成功: $inputEmail');
 
-      // 画面遷移などの処理は省略
+        // 成功したら次の画面（HomeScreen）へ遷移
+        _navigateToHomeScreen(context, inputEmail);
+      } else if (storedPassword == null) {
+        // メールアドレスが登録されていない
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('登録されていないメールアドレスです。'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      } else {
+        // パスワードが一致しない
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('パスワードが違います。'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
     }
   }
 
-  // アカウント作成リンクが押されたときの処理
-  void _goToSignUp() {
-    print('アカウント作成画面へ遷移');
-    // 実際にはNavigator.pushでサインアップ画面へ遷移します
-    ScaffoldMessenger.of(
-      context,
-    ).showSnackBar(SnackBar(content: Text('アカウント作成画面へ遷移 (仮)')));
+  // 💡 追加: 仮の登録処理 (SharedPreferencesに保存)
+  Future<void> _signUp() async {
+    if (_formKey.currentState!.validate()) {
+      final prefs = await SharedPreferences.getInstance();
+      final email = _emailController.text;
+      final password = _passwordController.text;
+
+      await prefs.setString(email, password);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('🎉 登録完了: $email'),
+          backgroundColor: Colors.green,
+        ),
+      );
+      print('アカウントが登録されました: $email');
+
+      _emailController.clear();
+      _passwordController.clear();
+    }
   }
 
   @override
   void dispose() {
-    // コントローラーを破棄してメモリリークを防ぐ
     _emailController.dispose();
     _passwordController.dispose();
     super.dispose();
@@ -74,12 +146,11 @@ class _LoginPageState extends State<LoginPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // 画像のように外枠を模したデザインにするため、PaddingとCardを使用
       body: Center(
         child: Padding(
           padding: const EdgeInsets.all(32.0),
           child: Container(
-            constraints: const BoxConstraints(maxWidth: 400), // PCでの見栄えを考慮
+            constraints: const BoxConstraints(maxWidth: 400),
             decoration: BoxDecoration(
               border: Border.all(color: Colors.black, width: 1),
               borderRadius: BorderRadius.circular(20),
@@ -104,7 +175,7 @@ class _LoginPageState extends State<LoginPage> {
                       ),
                     ),
 
-                    // メールアドレス入力フィールド
+                    // メールアドレス入力フィールド (変更なし)
                     _buildTextField(
                       controller: _emailController,
                       labelText: 'メールアドレス',
@@ -114,7 +185,6 @@ class _LoginPageState extends State<LoginPage> {
                         if (value == null || value.isEmpty) {
                           return 'メールアドレスを入力してください';
                         }
-                        // 簡単なメールアドレス形式のチェック
                         if (!RegExp(r'^[^@]+@[^@]+\.[^@]+').hasMatch(value)) {
                           return '有効なメールアドレスを入力してください';
                         }
@@ -123,11 +193,11 @@ class _LoginPageState extends State<LoginPage> {
                     ),
                     const SizedBox(height: 20),
 
-                    // パスワード入力フィールド
+                    // パスワード入力フィールド (変更なし)
                     _buildTextField(
                       controller: _passwordController,
                       labelText: 'パスワード',
-                      obscureText: true, // パスワードを非表示にする
+                      obscureText: true,
                       validator: (value) {
                         if (value == null || value.isEmpty) {
                           return 'パスワードを入力してください';
@@ -140,20 +210,18 @@ class _LoginPageState extends State<LoginPage> {
                     ),
                     const SizedBox(height: 40),
 
-                    // LOGIN ボタン
+                    // LOGIN ボタン (変更なし)
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton(
                         onPressed: _login,
                         style: ElevatedButton.styleFrom(
-                          backgroundColor: Colors.grey.shade300, // 画像に近い色
+                          backgroundColor: Colors.grey.shade300,
                           foregroundColor: Colors.black,
                           padding: const EdgeInsets.symmetric(vertical: 15),
                           shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(5),
-                            side: const BorderSide(
-                              color: Colors.black54,
-                            ), // 画像のような薄い枠線
+                            side: const BorderSide(color: Colors.black54),
                           ),
                         ),
                         child: const Text(
@@ -164,17 +232,35 @@ class _LoginPageState extends State<LoginPage> {
                     ),
                     const SizedBox(height: 30),
 
-                    // アカウントの作成 リンク
+                    // アカウントの作成 リンク (変更なし)
                     TextButton(
-                      onPressed: _goToSignUp,
+                      onPressed: _signUp,
                       child: const Text(
-                        'アカウントの作成',
+                        'アカウントの作成 (登録)',
                         style: TextStyle(
                           color: Colors.blue,
                           decoration: TextDecoration.underline,
                         ),
                       ),
                     ),
+
+                    // 追加: テストアカウントを作成してログインするボタン
+                    const SizedBox(height: 8),
+                    SizedBox(
+                      width: double.infinity,
+                      child: OutlinedButton(
+                        onPressed: _createTestAccountAndLogin,
+                        style: OutlinedButton.styleFrom(
+                          padding: const EdgeInsets.symmetric(vertical: 14),
+                          side: const BorderSide(
+                            color: Colors.black54,
+                          ), // 外枠線を追加
+                          foregroundColor: Colors.black, // 文字色を黒に設定
+                        ),
+                        child: const Text('テストアカウントでワンクリックログイン'),
+                      ),
+                    ),
+                    // ===================================================================
                   ],
                 ),
               ),
@@ -185,7 +271,7 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
-  // テキストフィールドを共通化するヘルパーメソッド
+  // テキストフィールドを共通化するヘルパーメソッド (変更なし)
   Widget _buildTextField({
     required TextEditingController controller,
     required String labelText,
@@ -206,14 +292,14 @@ class _LoginPageState extends State<LoginPage> {
           decoration: InputDecoration(
             hintText: hintText,
             filled: true,
-            fillColor: Colors.grey.shade200, // 画像の薄いグレーの背景
+            fillColor: Colors.grey.shade200,
             contentPadding: const EdgeInsets.symmetric(
               horizontal: 10,
               vertical: 15,
             ),
             border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(5),
-              borderSide: const BorderSide(color: Colors.black54), // 画像のような薄い枠線
+              borderSide: const BorderSide(color: Colors.black54),
             ),
             enabledBorder: OutlineInputBorder(
               borderRadius: BorderRadius.circular(5),
@@ -239,6 +325,7 @@ class _LoginPageState extends State<LoginPage> {
   }
 }
 
+// 💡 ログイン後の仮のホーム画面 (変更なし)
 class HomeScreen extends StatelessWidget {
   final String email;
   const HomeScreen({super.key, required this.email});
