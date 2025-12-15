@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:isar/isar.dart'; // データベースを使う
-import 'package:intl/intl.dart';  // 日付表示用
+import 'package:intl/intl.dart'; // 日付表示用
 
 // 作ったファイルをインポート
 import '../models/recording.dart';
@@ -41,7 +41,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('録音リスト')),
-      
+
       // StreamBuilderを使うと、DBが更新されるたびに画面も勝手に更新される
       body: _recordingStream == null
           ? const Center(child: CircularProgressIndicator())
@@ -51,7 +51,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 if (snapshot.hasError) {
                   return Center(child: Text('エラー: ${snapshot.error}'));
                 }
-                
+
                 final recordings = snapshot.data;
                 if (recordings == null || recordings.isEmpty) {
                   return const Center(child: Text('まだ録音がありません'));
@@ -61,15 +61,14 @@ class _HomeScreenState extends State<HomeScreen> {
                   itemCount: recordings.length,
                   itemBuilder: (context, index) {
                     final recording = recordings[index];
-                    
+
                     return Card(
                       child: ListTile(
                         leading: const Icon(Icons.mic, color: Colors.blue),
                         title: Text(recording.title), // DBのタイトル
                         subtitle: Text(
-                          // 日付と長さを表示
-                          '${DateFormat('yyyy/MM/dd HH:mm').format(recording.createdAt)}  (${_formatDuration(recording.durationSeconds)})'
-                        ),
+                            // 日付と長さを表示
+                            '${DateFormat('yyyy/MM/dd HH:mm').format(recording.createdAt)}  (${_formatDuration(recording.durationSeconds)})'),
                         trailing: const Icon(Icons.chevron_right),
                         onTap: () {
                           // 詳細画面へデータを渡して移動
@@ -77,8 +76,8 @@ class _HomeScreenState extends State<HomeScreen> {
                             context,
                             MaterialPageRoute(
                               builder: (context) => ResultScreen(
-                                recording: recording // ★ここでデータを渡す！
-                              ), 
+                                  recording: recording // ★ここでデータを渡す！
+                                  ),
                             ),
                           );
                         },
@@ -88,7 +87,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 );
               },
             ),
-      
+
       floatingActionButton: FloatingActionButton(
         onPressed: () {
           Navigator.push(

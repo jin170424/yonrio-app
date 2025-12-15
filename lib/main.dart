@@ -8,7 +8,7 @@ import 'package:path_provider/path_provider.dart';
 
 // 自分で作ったファイルを読み込む
 // ※ "voice_app" の部分は、pubspec.yamlのnameと同じにする
-import 'package:voice_app/screens/home_screen.dart'; 
+import 'package:voice_app/screens/home_screen.dart';
 import 'package:voice_app/screens/login_screen.dart';
 import 'package:voice_app/models/recording.dart'; // DBの設計図
 
@@ -61,7 +61,7 @@ class MyApp extends StatelessWidget {
       // アプリ起動時に最初に表示する画面
       // ログイン機能を実装済みなら LoginScreen()
       // まだなら HomeScreen() にしておく
-      home: const LoginScreen(), 
+      home: const LoginPage(),
     );
   }
 }

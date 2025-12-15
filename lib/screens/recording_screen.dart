@@ -8,7 +8,7 @@ import 'package:isar/isar.dart';
 import 'package:intl/intl.dart';
 
 // DBの設計図をインポート
-import '../models/recording.dart'; 
+import '../models/recording.dart';
 
 class RecordingScreen extends StatefulWidget {
   const RecordingScreen({super.key});
@@ -42,10 +42,11 @@ class _RecordingScreenState extends State<RecordingScreen> {
     try {
       if (await _audioRecorder.hasPermission()) {
         final directory = await getApplicationDocumentsDirectory();
-        
+
         // ファイル名: recording_20251211_120000.m4a
         final now = DateTime.now();
-        final fileName = 'recording_${DateFormat('yyyyMMdd_HHmmss').format(now)}.m4a';
+        final fileName =
+            'recording_${DateFormat('yyyyMMdd_HHmmss').format(now)}.m4a';
         final path = '${directory.path}/$fileName';
 
         // 録音スタート
@@ -73,7 +74,7 @@ class _RecordingScreenState extends State<RecordingScreen> {
   Future<void> _stopRecording() async {
     _timer?.cancel();
     final path = await _audioRecorder.stop();
-    
+
     setState(() {
       _isRecording = false;
     });
@@ -86,7 +87,7 @@ class _RecordingScreenState extends State<RecordingScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('録音を保存しました')),
       );
-      
+
       // ホームに戻る
       Navigator.pop(context);
     }
@@ -128,7 +129,7 @@ class _RecordingScreenState extends State<RecordingScreen> {
               style: const TextStyle(fontSize: 48, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 50),
-            
+
             // 録音ボタン
             GestureDetector(
               onTap: () {
@@ -146,7 +147,9 @@ class _RecordingScreenState extends State<RecordingScreen> {
                   shape: BoxShape.circle,
                   boxShadow: [
                     BoxShadow(
-                      color: _isRecording ? Colors.red.withOpacity(0.5) : Colors.blue.withOpacity(0.5),
+                      color: _isRecording
+                          ? Colors.red.withOpacity(0.5)
+                          : Colors.blue.withOpacity(0.5),
                       blurRadius: 20,
                       spreadRadius: 5,
                     )
