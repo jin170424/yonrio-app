@@ -2,10 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:isar/isar.dart'; // データベースを使う
 import 'package:intl/intl.dart';  // 日付表示用
 
+import 'package:amplify_flutter/amplify_flutter.dart';
+
 // 作ったファイルをインポート
 import '../models/recording.dart';
 import 'recording_screen.dart';
 import 'result_screen.dart';
+import 'login_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -40,7 +43,27 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('録音リスト')),
+      appBar: AppBar(
+        title: const Text('録音リスト'),
+        actions: [
+          // ログアウトボタン
+          IconButton(
+            icon: const Icon(Icons.logout),
+            onPressed: () async {
+              try {
+                await Amplify.Auth.signOut();
+                if (context.mounted) {
+                  Navigator.of(context).pushReplacement(
+                    MaterialPageRoute(builder: (context) => const LoginScreen()),
+                  );
+                }
+              } on AuthException catch (e) {
+                // エラーが発生した場合のログ出力
+                safePrint('Error signing out: ${e.message}');
+              }
+            },
+          )
+        ],),
       
       // StreamBuilderを使うと、DBが更新されるたびに画面も勝手に更新される
       body: _recordingStream == null

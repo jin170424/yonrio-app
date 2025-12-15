@@ -1,3 +1,4 @@
+import 'package:amplify_auth_cognito/amplify_auth_cognito.dart';
 import 'package:flutter/material.dart';
 // 日本語対応（カレンダーやコピー貼り付けメニューなど）のために必要
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -11,6 +12,11 @@ import 'package:path_provider/path_provider.dart';
 import 'package:voice_app/screens/home_screen.dart'; 
 import 'package:voice_app/screens/login_screen.dart';
 import 'package:voice_app/models/recording.dart'; // DBの設計図
+
+//amplify config
+import 'amplifyconfiguration.dart';
+import 'package:amplify_flutter/amplify_flutter.dart';
+import 'package:amplify_auth_cognito/amplify_auth_cognito.dart';
 
 // アプリのスタート地点
 void main() async {
@@ -28,8 +34,22 @@ void main() async {
     directory: dir.path, // 保存場所を指定
   );
 
+  await _configureAmplify();
+
   // 準備ができたらアプリを画面に描画開始
   runApp(const MyApp());
+}
+
+Future<void> _configureAmplify() async {
+  try {
+    final auth = AmplifyAuthCognito();
+    await Amplify.addPlugin(auth);
+
+    await Amplify.configure(amplifyconfig);
+    safePrint('Amplify configured successfully');
+  } on Exception catch (e) {
+    safePrint('Amplify config error: $e');
+  }
 }
 
 class MyApp extends StatelessWidget {
