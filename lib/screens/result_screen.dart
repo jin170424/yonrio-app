@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import '../services/gemini_service.dart';
-import 'share_screen.dart'; // 共有画面を読み込む
+import '../models/recording.dart'; // モデルをインポート
+import 'share_screen.dart';
 
 class ResultScreen extends StatefulWidget {
-  const ResultScreen({super.key});
+  // 親(Home)からデータを受け取るための変数
+  final Recording recording;
+
+  const ResultScreen({super.key, required this.recording});
 
   @override
   State<ResultScreen> createState() => _ResultScreenState();
@@ -12,11 +16,9 @@ class ResultScreen extends StatefulWidget {
 class _ResultScreenState extends State<ResultScreen> {
   final GeminiService _geminiService = GeminiService();
   
-  // テキストエリアに表示する内容
   String _displayText = "（文字起こしボタンを押してください）";
   bool _isLoading = false;
 
-  // 処理をまとめる関数
   Future<void> _runGeminiTask(Function task) async {
     setState(() => _isLoading = true);
     final result = await task();
@@ -30,9 +32,9 @@ class _ResultScreenState extends State<ResultScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('詳細データ'),
+        // タイトルを受け取ったデータの日付などにする
+        title: Text(widget.recording.title),
         actions: [
-          // 共有ボタン (ShareScreenへ移動)
           IconButton(
             icon: const Icon(Icons.share),
             onPressed: () {
@@ -50,14 +52,19 @@ class _ResultScreenState extends State<ResultScreen> {
         padding: const EdgeInsets.all(16.0),
         child: Column(
           children: [
-            // 操作ボタンエリア (横並び)
+            // ファイル情報の表示（デバッグ用にも便利）
+            Text("ファイルパス: ${widget.recording.filePath}", 
+                style: const TextStyle(fontSize: 12, color: Colors.grey)),
+            const SizedBox(height: 10),
+
             SingleChildScrollView(
-              scrollDirection: Axis.horizontal, // ボタンが多いので横スクロール対応
+              scrollDirection: Axis.horizontal,
               child: Row(
                 children: [
                   ElevatedButton.icon(
                     onPressed: _isLoading ? null : () => _runGeminiTask(
-                      () => _geminiService.transcribeAudio('dummy_path')
+                      // ★ここで実際のファイルパスを渡す！
+                      () => _geminiService.transcribeAudio(widget.recording.filePath)
                     ),
                     icon: const Icon(Icons.mic),
                     label: const Text('文字起こし'),
@@ -85,10 +92,9 @@ class _ResultScreenState extends State<ResultScreen> {
             ),
             const SizedBox(height: 20),
             
-            // テキスト表示エリア
             Expanded(
               child: _isLoading 
-                ? const Center(child: CircularProgressIndicator()) // グルグル表示
+                ? const Center(child: CircularProgressIndicator())
                 : Container(
                     width: double.infinity,
                     padding: const EdgeInsets.all(8),
