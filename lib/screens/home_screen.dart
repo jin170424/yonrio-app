@@ -73,11 +73,12 @@ class _HomeScreenState extends State<HomeScreen> {
                         trailing: const Icon(Icons.chevron_right),
                         onTap: () {
                           // 詳細画面へデータを渡して移動
-                          // ※ResultScreen側もデータの受け取り対応が必要ですが、まずは移動だけ
                           Navigator.push(
                             context,
                             MaterialPageRoute(
-                              builder: (context) => const ResultScreen(), 
+                              builder: (context) => ResultScreen(
+                                recording: recording // ★ここでデータを渡す！
+                              ), 
                             ),
                           );
                         },
