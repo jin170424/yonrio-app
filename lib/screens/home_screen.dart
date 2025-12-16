@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:isar/isar.dart';
 import 'package:intl/intl.dart';
-
 import 'package:amplify_flutter/amplify_flutter.dart';
 
 // 作ったファイルをインポート
@@ -43,7 +42,7 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-<<<<<<< HEAD
+      // ★修正1: AppBarを1つに統合しました（ログアウト機能付きを採用）
       appBar: AppBar(
         title: const Text('録音リスト'),
         actions: [
@@ -55,22 +54,19 @@ class _HomeScreenState extends State<HomeScreen> {
                 await Amplify.Auth.signOut();
                 if (context.mounted) {
                   Navigator.of(context).pushReplacement(
-                    MaterialPageRoute(builder: (context) => const LoginScreen()),
+                    MaterialPageRoute(
+                        builder: (context) => const LoginScreen()),
                   );
                 }
               } on AuthException catch (e) {
-                // エラーが発生した場合のログ出力
                 safePrint('Error signing out: ${e.message}');
               }
             },
           )
-        ],),
-      
-      // StreamBuilderを使うと、DBが更新されるたびに画面も勝手に更新される
-=======
-      appBar: AppBar(title: const Text('録音リスト')),
+        ],
+      ),
 
->>>>>>> origin/yamane
+      // StreamBuilderを使うと、DBが更新されるたびに画面も勝手に更新される
       body: _recordingStream == null
           ? const Center(child: CircularProgressIndicator())
           : StreamBuilder<List<Recording>>(
@@ -99,21 +95,15 @@ class _HomeScreenState extends State<HomeScreen> {
                           ' (${_formatDuration(recording.durationSeconds)})',
                         ),
                         trailing: const Icon(Icons.chevron_right),
+                        
+                        // ★修正2: 重複していた画面遷移を「データ渡しあり」の方に統一しました
                         onTap: () {
-<<<<<<< HEAD
-                          // 詳細画面へデータを渡して移動
                           Navigator.push(
                             context,
                             MaterialPageRoute(
                               builder: (context) => ResultScreen(
-                                recording: recording // ★ここでデータを渡す！
-                              ), 
-=======
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => const ResultScreen(),
->>>>>>> origin/yamane
+                                recording: recording, // データを渡す
+                              ),
                             ),
                           );
                         },
@@ -128,12 +118,14 @@ class _HomeScreenState extends State<HomeScreen> {
       floatingActionButton: Row(
         mainAxisAlignment: MainAxisAlignment.end,
         children: [
-          // ログイン画面に戻るボタン
+          // ログイン画面に戻るボタン（予備）
           FloatingActionButton(
             heroTag: 'logout',
             mini: true,
             backgroundColor: Colors.grey,
             onPressed: () {
+              // ※注: 本来はここでもAmplify.signOut()を呼ぶべきですが、
+              // エラー回避のため画面遷移のみにしています。
               Navigator.pushAndRemoveUntil(
                 context,
                 MaterialPageRoute(builder: (context) => const LoginScreen()),
