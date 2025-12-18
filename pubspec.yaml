@@ -42,6 +42,9 @@ dependencies:
   amplify_storage_s3: ^2.4.1
   amplify_api: ^2.4.1
 
+  # 接続チェック
+  internet_connection_checker_plus: ^2.7.2
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

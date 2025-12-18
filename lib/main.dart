@@ -16,7 +16,10 @@ import 'package:voice_app/models/recording.dart'; // DBの設計図
 //amplify config
 import 'amplifyconfiguration.dart';
 import 'package:amplify_flutter/amplify_flutter.dart';
-import 'package:amplify_auth_cognito/amplify_auth_cognito.dart';
+
+// オフラインかどうか
+import 'package:internet_connection_checker_plus/internet_connection_checker_plus.dart';
+import 'services/network_service.dart';
 
 // アプリのスタート地点
 void main() async {
@@ -33,6 +36,8 @@ void main() async {
     [RecordingSchema], // recording.g.dart で作られた「設計図」を渡す
     directory: dir.path, // 保存場所を指定
   );
+
+  NetworkService().initialize();
 
   await _configureAmplify();
 
@@ -52,15 +57,62 @@ Future<void> _configureAmplify() async {
   }
 }
 
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
   const MyApp({super.key});
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  bool _isLoading = true; // チェック中は true
+  bool _isLoggedIn = false; // ログイン済みなら true
+
+  @override
+  void initState() {
+    super.initState();
+    // アプリ起動時にログインチェックを実行
+    _checkAuthState();
+  }
+
+  // ログイン状態を確認する関数
+  Future<void> _checkAuthState() async {
+    // ネット接続状況を確認
+    // オフラインの場合はamplifyへの問い合わせをスキップ
+    final isConnected = await InternetConnection().hasInternetAccess;
+
+    if (!isConnected) {
+      safePrint('オフラインのためログインチェックをスキップします');
+      setState(() {
+        _isLoggedIn = true; // キャッシュの有無にかかわらずオフライン時はホーム画面に遷移
+        _isLoading = false;
+      });
+      return;
+    }
+
+    // オンライン時はamplifyでログイン状態確認
+    try {
+      final user = await Amplify.Auth.getCurrentUser();
+      safePrint('ログイン済みユーザー: ${user.username}');
+      setState(() {
+        _isLoggedIn = true; // ログイン済み
+        _isLoading = false; // チェック完了
+      });
+    } on AuthException catch (e) {
+      safePrint('未ログイン状態です: ${e.message}');
+      setState(() {
+        _isLoggedIn = false; // 未ログイン
+        _isLoading = false; // チェック完了
+      });
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       // アプリのタイトル（Androidのタスク一覧などに表示される）
       title: '文字起こしアプリ',
-
+      debugShowCheckedModeBanner: false,
       // --- 日本語化の設定 ---
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
@@ -77,11 +129,14 @@ class MyApp extends StatelessWidget {
         primarySwatch: Colors.blue, // メインカラー
         useMaterial3: true, // 新しいGoogleのデザインルールを使う
       ),
-
       // アプリ起動時に最初に表示する画面
       // ログイン機能を実装済みなら LoginScreen()
       // まだなら HomeScreen() にしておく
-      home: const LoginScreen(), 
+      home: _isLoading
+      ? const Scaffold(body: Center(child: CircularProgressIndicator()))
+      : _isLoggedIn
+        ? const HomeScreen()
+        : const LoginScreen(), 
     );
   }
 }
