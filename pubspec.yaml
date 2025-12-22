@@ -11,6 +11,8 @@ dependencies:
     sdk: flutter
   shared_preferences: ^2.2.2
 
+  audioplayers: ^6.0.0
+  
   flutter_localizations:
     sdk: flutter
   
