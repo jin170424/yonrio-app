@@ -28,7 +28,24 @@ class Recording {
 
   // AI要約
   String? summary;
-  
-  // タグなどのリンクはここに追加
-  // final tags = IsarLinks<Tag>();
+
+  // タイトルを更新するメソッド
+  Future<void> updateTitle(String newTitle) async {
+    final isar = Isar.getInstance();
+    if (isar == null) {
+      print("❌ [DEBUG] Isarのインスタンスが見つかりません");
+      return;
+    }
+
+    try {
+      await isar.writeTxn(() async {
+        print("🛠 [DEBUG] タイトル更新開始: $title -> $newTitle");
+        this.title = newTitle; 
+        await isar.recordings.put(this);
+        print("✅ [DEBUG] データベース更新完了");
+      });
+    } catch (e) {
+      print("❌ [DEBUG] データベース更新中にエラー: $e");
+    }
+  }
 }

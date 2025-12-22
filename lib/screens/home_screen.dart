@@ -1,3 +1,5 @@
+// home_screen.dart
+
 import 'package:flutter/material.dart';
 import 'package:isar/isar.dart';
 import 'package:intl/intl.dart';
@@ -36,6 +38,71 @@ class _HomeScreenState extends State<HomeScreen> {
             .watch(fireImmediately: true);
       });
     }
+  }
+
+  // 名前変更ダイアログを表示するメソッド
+  void _showRenameDialog(BuildContext context, Recording recording) {
+    final TextEditingController titleController = TextEditingController(text: recording.title);
+
+    showDialog(
+      context: context,
+      builder: (dialogContext) { // ダイアログ専用のcontextとして扱う
+        return AlertDialog(
+          title: const Text('録音名を変更'),
+          content: TextField(
+            controller: titleController,
+            autofocus: true,
+            decoration: const InputDecoration(hintText: "新しい録音名"),
+            onSubmitted: (value) {
+              _saveNewTitle(dialogContext, recording, value);
+            },
+          ),
+          actions: <Widget>[
+            TextButton(
+              child: const Text('キャンセル'),
+              onPressed: () {
+                Navigator.of(dialogContext).pop();
+              },
+            ),
+            FilledButton(
+              child: const Text('保存'),
+              onPressed: () {
+                _saveNewTitle(dialogContext, recording, titleController.text);
+              },
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  // 新しい名前をデータベースに保存するメソッド
+  void _saveNewTitle(BuildContext context, Recording recording, String newTitle) async {
+    final trimmedTitle = newTitle.trim();
+    
+    // SnackBarを表示するためのメッセンジャーを先に取得しておく（pop後のcontextエラー防止）
+    final scaffoldMessenger = ScaffoldMessenger.of(context);
+
+    if (trimmedTitle.isEmpty) {
+      Navigator.of(context).pop();
+      scaffoldMessenger.showSnackBar(
+        const SnackBar(content: Text('タイトルは空にできません。')),
+      );
+      return;
+    }
+
+    // データベースを更新
+    await recording.updateTitle(trimmedTitle);
+    
+    // ダイアログを閉じる（contextがまだ有効か確認）
+    if (context.mounted) {
+      Navigator.of(context).pop();
+    }
+
+    // 保存したメッセンジャーを使って通知を表示
+    scaffoldMessenger.showSnackBar(
+      const SnackBar(content: Text('タイトルを更新しました')),
+    );
   }
 
   @override
@@ -79,6 +146,10 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                           );
                         },
+                        // 長押しで名前変更ダイアログを開く
+                        onLongPress: () {
+                          _showRenameDialog(context, recording);
+                        },
                       ),
                     );
                   },
@@ -86,11 +157,9 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
 
-      // ===== 右下のボタン群 =====
       floatingActionButton: Row(
         mainAxisAlignment: MainAxisAlignment.end,
         children: [
-          // ログイン画面に戻るボタン
           FloatingActionButton(
             heroTag: 'logout',
             mini: true,
@@ -104,10 +173,7 @@ class _HomeScreenState extends State<HomeScreen> {
             },
             child: const Icon(Icons.logout),
           ),
-
           const SizedBox(width: 12),
-
-          // 共有ボタン
           FloatingActionButton(
             heroTag: 'share',
             mini: true,
@@ -119,10 +185,7 @@ class _HomeScreenState extends State<HomeScreen> {
             },
             child: const Icon(Icons.share),
           ),
-
           const SizedBox(width: 12),
-
-          // 録音追加ボタン
           FloatingActionButton(
             heroTag: 'add',
             onPressed: () {
@@ -140,7 +203,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // 秒数を 00:00 に変換
   String _formatDuration(int seconds) {
     final minutes = (seconds ~/ 60).toString().padLeft(2, '0');
     final secs = (seconds % 60).toString().padLeft(2, '0');
