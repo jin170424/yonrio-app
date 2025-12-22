@@ -39,14 +39,15 @@ class _RecordingScreenState extends State<RecordingScreen> {
       if (await _audioRecorder.hasPermission()) {
         final directory = await getApplicationDocumentsDirectory();
         
-        // ★ m4aファイル名
+        // ★修正: 拡張子を .wav に変更 (エミュレータ対策)
         final now = DateTime.now();
-        final fileName = 'recording_${DateFormat('yyyyMMdd_HHmmss').format(now)}.m4a';
+        final fileName = 'recording_${DateFormat('yyyyMMdd_HHmmss').format(now)}.wav';
         final path = '${directory.path}/$fileName';
 
         await _audioRecorder.start(
           path: path,
-          encoder: AudioEncoder.aacLc, // ★ m4a (AAC) エンコーダー
+          // ★修正: エンコーダーを wav に変更 (これで音が途切れなくなります)
+          encoder: AudioEncoder.wav, 
         );
 
         setState(() {

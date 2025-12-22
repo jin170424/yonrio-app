@@ -1,21 +1,23 @@
 import 'dart:io';
 import 'package:google_generative_ai/google_generative_ai.dart';
+// mimeタイプを判定するためにpathライブラリを使います（標準で入っています）
+import 'package:path/path.dart' as p;
 
 class GeminiService {
-  // ★キーはそのままでOK！認証には成功しています。
+  // ★認証済みのキー（そのまま）
   final String _apiKey = 'AIzaSyA5JJi6rRCabRmipr0L2-Y8jqFR65Tfj_I';
 
   late final GenerativeModel _model;
 
   GeminiService() {
-    // Gemini 2.5 Lite だと動く(1.5は不可)
+    // 無料で使える軽量モデル
     _model = GenerativeModel(
       model: 'gemini-2.5-flash-lite',
       apiKey: _apiKey,
     );
   }
 
-  // 1. 文字起こし (m4a対応)
+  // 1. 文字起こし (全フォーマット対応版)
   Future<String> transcribeAudio(String audioPath) async {
     try {
       final file = File(audioPath);
@@ -23,18 +25,44 @@ class GeminiService {
         return "エラー: 音声ファイルが見つかりません\nパス: $audioPath";
       }
 
-      // ファイルサイズチェック
+      // ファイルサイズチェック (20MB制限)
       final length = await file.length();
       if (length > 20 * 1024 * 1024) {
         return "エラー: ファイルサイズが大きすぎます (20MB以下にしてください)";
       }
 
       final bytes = await file.readAsBytes();
+      
+      // ★拡張子からMIMEタイプを自動判定
+      final extension = p.extension(audioPath).toLowerCase().replaceAll('.', '');
+      String mimeType;
+      
+      switch (extension) {
+        case 'mp3':
+          mimeType = 'audio/mp3';
+          break;
+        case 'wav':
+          mimeType = 'audio/wav';
+          break;
+        case 'm4a':
+        case 'mp4':
+        case 'aac':
+          mimeType = 'audio/mp4';
+          break;
+        case 'ogg':
+        case 'oga':
+          mimeType = 'audio/ogg';
+          break;
+        default:
+          // 分からない場合は汎用的なものを指定（WAVとして送ってみる）
+          mimeType = 'audio/wav';
+      }
 
       final content = [
         Content.multi([
           TextPart('この音声を日本語で文字起こししてください。話者分離（Aさん、Bさん）もお願いします。'),
-          DataPart('audio/mp4', bytes), 
+          // ★自動判定したmimeタイプを使う
+          DataPart(mimeType, bytes), 
         ])
       ];
 
@@ -46,7 +74,7 @@ class GeminiService {
     }
   }
 
-  // 2. 要約
+  // （要約・翻訳機能は変更なしなので省略可、そのままでOK）
   Future<String> summarizeText(String text) async {
     if (text.isEmpty || text.contains("エラー")) return "要約するテキストがありません。";
     try {
@@ -58,7 +86,6 @@ class GeminiService {
     }
   }
 
-  // 3. 翻訳
   Future<String> translateText(String text) async {
     if (text.isEmpty || text.contains("エラー")) return "翻訳するテキストがありません。";
     try {
