@@ -8,9 +8,7 @@ class GeminiService {
   late final GenerativeModel _model;
 
   GeminiService() {
-    // ★ここを修正！
-    // 2.0は無料枠がないので、無料枠で最強の「1.5 Flash」に戻します。
-    // 今の正しいキーなら、これで動きます！
+    // Gemini 2.5 Lite だと動く(1.5は不可)
     _model = GenerativeModel(
       model: 'gemini-2.5-flash-lite',
       apiKey: _apiKey,
