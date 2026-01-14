@@ -1,11 +1,11 @@
-import 'dart:io'; // File操作用
+import 'dart:io'; 
 import 'package:flutter/material.dart';
 import 'package:isar/isar.dart';
 import 'package:intl/intl.dart';
 import 'package:amplify_flutter/amplify_flutter.dart';
-import 'package:file_picker/file_picker.dart'; // インポート用
-import 'package:path_provider/path_provider.dart'; // パス取得用
-import 'package:share_plus/share_plus.dart'; // 共有用
+import 'package:file_picker/file_picker.dart'; 
+import 'package:path_provider/path_provider.dart'; 
+import 'package:share_plus/share_plus.dart'; 
 
 import '../models/recording.dart';
 import 'recording_screen.dart';
@@ -40,10 +40,49 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // ★インポート処理
+  // ★名前変更ダイアログを表示する関数
+  void _showRenameDialog(Recording recording) {
+    final TextEditingController _controller = TextEditingController(text: recording.title);
+    
+    showDialog(
+      context: context, 
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('名前を変更'),
+          content: TextField(
+            controller: _controller,
+            decoration: const InputDecoration(hintText: "新しいタイトルを入力"),
+            autofocus: true,
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context), 
+              child: const Text('キャンセル')
+            ),
+            ElevatedButton(
+              onPressed: () async {
+                final newTitle = _controller.text.trim();
+                if (newTitle.isNotEmpty) {
+                  final isar = Isar.getInstance();
+                  if (isar != null) {
+                    await isar.writeTxn(() async {
+                      recording.title = newTitle;
+                      await isar.recordings.put(recording);
+                    });
+                  }
+                }
+                Navigator.pop(context);
+              }, 
+              child: const Text('変更')
+            ),
+          ],
+        );
+      }
+    );
+  }
+
   Future<void> _importFile() async {
     try {
-      // ファイル選択画面を開く
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
         allowedExtensions: ['mp3', 'm4a', 'wav', 'aac'], 
@@ -53,12 +92,10 @@ class _HomeScreenState extends State<HomeScreen> {
         final originalPath = result.files.single.path!;
         final fileName = result.files.single.name;
 
-        // アプリ内の安全な場所にコピーする
         final appDir = await getApplicationDocumentsDirectory();
         final newPath = '${appDir.path}/imported_$fileName';
         await File(originalPath).copy(newPath);
 
-        // データベースに登録
         final isar = Isar.getInstance();
         if (isar != null) {
           final newRecording = Recording()
@@ -91,7 +128,6 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text('録音リスト'),
         actions: [
-          // 念のためAppBarにもログアウトボタンを置いておきます
           IconButton(
             icon: const Icon(Icons.logout),
             onPressed: () async {
@@ -99,8 +135,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 await Amplify.Auth.signOut();
                 if (context.mounted) {
                   Navigator.of(context).pushReplacement(
-                    MaterialPageRoute(
-                        builder: (context) => const LoginScreen()),
+                    MaterialPageRoute(builder: (context) => const LoginScreen()),
                   );
                 }
               } on AuthException catch (e) {
@@ -144,11 +179,13 @@ class _HomeScreenState extends State<HomeScreen> {
                           Navigator.push(
                             context,
                             MaterialPageRoute(
-                              builder: (context) => ResultScreen(
-                                recording: recording,
-                              ),
+                              builder: (context) => ResultScreen(recording: recording),
                             ),
                           );
+                        },
+                        // ★ここを追加！長押しで名前変更
+                        onLongPress: () {
+                          _showRenameDialog(recording);
                         },
                       ),
                     );
@@ -157,17 +194,14 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
 
-      // ★ここがボタンエリアです。4つ全て復活させました！
       floatingActionButton: Row(
         mainAxisAlignment: MainAxisAlignment.end,
         children: [
-          // 1. ログイン画面に戻る（ログアウト）
           FloatingActionButton(
             heroTag: 'logout',
             mini: true,
             backgroundColor: Colors.grey,
             onPressed: () async {
-               // ログアウト処理をしてログイン画面へ
                await Amplify.Auth.signOut();
                if (context.mounted) {
                   Navigator.pushAndRemoveUntil(
@@ -179,10 +213,7 @@ class _HomeScreenState extends State<HomeScreen> {
             },
             child: const Icon(Icons.logout),
           ),
-
           const SizedBox(width: 12),
-
-          // 2. 共有ボタン（ダミー）
           FloatingActionButton(
             heroTag: 'share',
             mini: true,
@@ -194,28 +225,20 @@ class _HomeScreenState extends State<HomeScreen> {
             },
             child: const Icon(Icons.share),
           ),
-
           const SizedBox(width: 12),
-
-          // 3. インポートボタン（オレンジ色）
           FloatingActionButton(
             heroTag: 'import',
             backgroundColor: Colors.orange,
             onPressed: _importFile, 
             child: const Icon(Icons.file_upload),
           ),
-
           const SizedBox(width: 12),
-
-          // 4. 録音追加ボタン（メイン）
           FloatingActionButton(
             heroTag: 'add',
             onPressed: () {
               Navigator.push(
                 context,
-                MaterialPageRoute(
-                  builder: (context) => const RecordingScreen(),
-                ),
+                MaterialPageRoute(builder: (context) => const RecordingScreen()),
               );
             },
             child: const Icon(Icons.mic),
