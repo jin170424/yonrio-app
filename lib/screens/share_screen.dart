@@ -4,8 +4,14 @@ import 'package:share_plus/share_plus.dart';
 class ShareScreen extends StatelessWidget {
   // 共有したいテキストを受け取る
   final String textContent;
+  // ★音声ファイルのパスも受け取るように追加
+  final String audioPath;
   
-  const ShareScreen({super.key, required this.textContent});
+  const ShareScreen({
+    super.key, 
+    required this.textContent,
+    required this.audioPath,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -30,7 +36,20 @@ class ShareScreen extends StatelessWidget {
           ),
           const Divider(),
 
-          // 2. 音声ファイルのリンク発行 (AWS S3)
+          // 2. 音声ファイルそのものを共有 (NEW!)
+          ListTile(
+            leading: const Icon(Icons.audio_file, color: Colors.purple),
+            title: const Text('音声ファイルを共有'),
+            subtitle: const Text('m4aやmp3ファイルをLINEやドライブに送ります'),
+            onTap: () async {
+              // ファイルをXFile形式に変換して共有
+              final xFile = XFile(audioPath);
+              await Share.shareXFiles([xFile], text: '音声ファイル ($audioPath)');
+            },
+          ),
+          const Divider(),
+
+          // 3. 音声ファイルのリンク発行 (AWS S3)
           ListTile(
             leading: const Icon(Icons.link, color: Colors.green),
             title: const Text('音声リンクを発行 (S3)'),
@@ -45,7 +64,7 @@ class ShareScreen extends StatelessWidget {
           ),
           const Divider(),
           
-          // 3. アプリ内共有 (オプション機能)
+          // 4. アプリ内共有 (オプション機能)
           ListTile(
             leading: const Icon(Icons.people, color: Colors.orange),
             title: const Text('ユーザーを指定して送信'),

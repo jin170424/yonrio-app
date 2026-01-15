@@ -102,7 +102,10 @@ Future<void> s3Upload() async {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => ShareScreen(textContent: _displayText),
+                  builder: (context) => ShareScreen(
+                    textContent: _displayText,
+                    audioPath: widget.recording.filePath,
+                  ),
                 ),
               );
             },
