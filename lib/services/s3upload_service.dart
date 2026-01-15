@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 
 class S3UploadService {
-  final String _lambdaApiUrl = '';
+  final String _lambdaApiUrl = 'https://lyykfzqqz7.execute-api.us-east-1.amazonaws.com/dev/presigned';
 
   /// メイン処理: アップロードを行い、作成されたファイルIDなどの情報を返す
   /// 戻り値: { 'file_id':String, 's3_key':String, ... }

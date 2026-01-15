@@ -5,7 +5,7 @@ import 'package:path/path.dart' as p;
 
 class GeminiService {
   // ★認証済みのキー（そのまま）
-  final String _apiKey = 'AIzaSyA5JJi6rRCabRmipr0L2-Y8jqFR65Tfj_I';
+  final String _apiKey = 'AIzaSyDH1A24geMSTxF0GMKzM-Lo_3Z-ZIFgDmo';
 
   late final GenerativeModel _model;
 
