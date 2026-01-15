@@ -5,7 +5,6 @@ import 'dart:io';
 import '../services/gemini_service.dart';
 import '../models/recording.dart'; 
 import 'share_screen.dart';
-import 'dart:io';
 import '../services/s3upload_service.dart';
 import 'package:amplify_flutter/amplify_flutter.dart';
 import 'package:amplify_auth_cognito/amplify_auth_cognito.dart';
@@ -32,6 +31,16 @@ class _ResultScreenState extends State<ResultScreen> {
   
   String _displayText = "（文字起こしボタンを押してください）";
   bool _isLoading = false;
+
+  // ★追加: 対応言語リスト (表示名 : Geminiに渡す英語名)
+  final Map<String, String> _targetLanguages = {
+    '英語': 'English',
+    '中国語': 'Simplified Chinese',
+    '韓国語': 'Korean',
+    'スペイン語': 'Spanish',
+    'フランス語': 'French',
+    'ドイツ語': 'German',
+  };
 
   @override
   void initState() {
@@ -106,60 +115,97 @@ class _ResultScreenState extends State<ResultScreen> {
     });
   }
 
-Future<void> s3Upload() async {
-  // ファイルパスの取得（TODO: 念のため空チェックいれる）
-  final file = File(widget.recording.filePath);
-
-  // トークンの取得処理
-  try {
-    final tokenService = GetIdtokenService();
-    final token = await tokenService.getIdtoken();
-
-    // トークンがない場合（未ログインなど）はここで終了
-    if (token == null) {
-      print("トークンが取得できませんでした（未ログイン）");
-      
-      if (!mounted) return;
+  // ★追加: 言語選択ダイアログを表示して翻訳を実行する関数
+  Future<void> _showTranslationDialog() async {
+    // テキストがない場合は警告を出して終了
+    if (_displayText.isEmpty || _displayText.startsWith("（")) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('ログインが必要です')),
+        const SnackBar(content: Text('翻訳するテキストがありません')),
       );
       return;
     }
 
-    print("トークン取得成功: ${token.substring(0, 10)}...");
-
-    // アップロード処理
-    final uploadService = S3UploadService();
-    
-    // アップロード実行
-    final result = await uploadService.uploadAudioFile(
-      file, 
-      idToken: token
-    );
-
-    // 成功時の処理
-    final fileId = result['file_id'];
-    final s3Key = result['s3_key'];
-    
-    print("保存完了！ ID: $fileId");
-
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('アップロード完了 (ID: $fileId)')),
-    );
-
-    // TODO: DynamoDB保存APIの呼び出しなどをここに記述
-
-  } catch (e) {
-    // エラーハンドリング
-    print("アップロード失敗: $e");
-    
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('エラーが発生しました: $e')),
+    // ダイアログ表示
+    showDialog(
+      context: context,
+      builder: (context) {
+        return SimpleDialog(
+          title: const Text('翻訳先の言語を選択'),
+          children: _targetLanguages.entries.map((entry) {
+            return SimpleDialogOption(
+              onPressed: () {
+                Navigator.pop(context); // ダイアログを閉じる
+                
+                // 選択された言語でGeminiを実行
+                _runGeminiTask(
+                  () => _geminiService.translateText(
+                    _displayText,
+                    targetLang: entry.value, // Mapの値(Englishなど)を渡す
+                  ),
+                );
+              },
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8.0),
+                child: Text(entry.key, style: const TextStyle(fontSize: 16)), // Mapのキー(英語など)を表示
+              ),
+            );
+          }).toList(),
+        );
+      },
     );
   }
-}
+
+  Future<void> s3Upload() async {
+    // ファイルパスの取得
+    final file = File(widget.recording.filePath);
+
+    // トークンの取得処理
+    try {
+      final tokenService = GetIdtokenService();
+      final token = await tokenService.getIdtoken();
+
+      // トークンがない場合（未ログインなど）はここで終了
+      if (token == null) {
+        print("トークンが取得できませんでした（未ログイン）");
+        
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('ログインが必要です')),
+        );
+        return;
+      }
+
+      print("トークン取得成功: ${token.substring(0, 10)}...");
+
+      // アップロード処理
+      final uploadService = S3UploadService();
+      
+      // アップロード実行
+      final result = await uploadService.uploadAudioFile(
+        file, 
+        idToken: token
+      );
+
+      // 成功時の処理
+      final fileId = result['file_id'];
+      
+      print("保存完了！ ID: $fileId");
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('アップロード完了 (ID: $fileId)')),
+      );
+
+    } catch (e) {
+      // エラーハンドリング
+      print("アップロード失敗: $e");
+      
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('エラーが発生しました: $e')),
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -274,10 +320,9 @@ Future<void> s3Upload() async {
                   const SizedBox(width: 10),
                   // ---------------------------
 
+                  // ★変更: 翻訳ボタン (ダイアログを表示)
                   ElevatedButton.icon(
-                    onPressed: _isLoading ? null : () => _runGeminiTask(
-                      () => _geminiService.translateText(_displayText)
-                    ),
+                    onPressed: _isLoading ? null : _showTranslationDialog,
                     icon: const Icon(Icons.translate),
                     label: const Text('翻訳'),
                   ),
