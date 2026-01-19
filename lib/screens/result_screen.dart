@@ -23,16 +23,16 @@ class _ResultScreenState extends State<ResultScreen> {
   final GeminiService _geminiService = GeminiService();
   final S3UploadService _s3UploadService = S3UploadService();
   
-  // ★プレイヤー関連の変数
+  // ★変更点1: 文字列変数の代わりにコントローラーを使います
+  late TextEditingController _textController;
+
   final AudioPlayer _audioPlayer = AudioPlayer();
   bool _isPlaying = false;
   Duration _duration = Duration.zero; // 全体の長さ
   Duration _position = Duration.zero; // 現在の再生位置
-  
-  String _displayText = "（文字起こしボタンを押してください）";
   bool _isLoading = false;
 
-  // ★追加: 対応言語リスト (表示名 : Geminiに渡す英語名)
+  // ★対応言語リスト (表示名 : Geminiに渡す英語名)
   final Map<String, String> _targetLanguages = {
     '英語': 'English',
     '中国語': 'Simplified Chinese',
@@ -45,7 +45,16 @@ class _ResultScreenState extends State<ResultScreen> {
   @override
   void initState() {
     super.initState();
+    // 初期値をセット
+    _textController = TextEditingController(text: "（文字起こしボタンを押してください）");
     _initAudioPlayer();
+  }
+
+  @override
+  void dispose() {
+    _audioPlayer.dispose();
+    _textController.dispose(); // ★コントローラーは破棄が必要です
+    super.dispose();
   }
 
   // ★音声ファイルのセットアップとイベント監視
@@ -85,12 +94,6 @@ class _ResultScreenState extends State<ResultScreen> {
     }
   }
 
-  @override
-  void dispose() {
-    _audioPlayer.dispose(); 
-    super.dispose();
-  }
-
   void _togglePlay() {
     if (_isPlaying) {
       _audioPlayer.pause();
@@ -106,26 +109,31 @@ class _ResultScreenState extends State<ResultScreen> {
     return "$minutes:$seconds";
   }
 
-  Future<void> _runGeminiTask(Function task) async {
+  // ★変更点2: 結果をコントローラーに反映するように修正
+  Future<void> _runGeminiTask(Future<String> Function() task) async {
     setState(() => _isLoading = true);
+    
+    // タスク実行
     final result = await task();
+    
     setState(() {
-      _displayText = result;
+      _textController.text = result; // 結果で上書き
       _isLoading = false;
     });
   }
 
-  // ★追加: 言語選択ダイアログを表示して翻訳を実行する関数
+  // ★言語選択ダイアログを表示して翻訳を実行する関数
   Future<void> _showTranslationDialog() async {
-    // テキストがない場合は警告を出して終了
-    if (_displayText.isEmpty || _displayText.startsWith("（")) {
+    // ★現在のテキストボックスの中身を取得してチェック
+    final currentText = _textController.text;
+
+    if (currentText.isEmpty || currentText.startsWith("（")) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('翻訳するテキストがありません')),
       );
       return;
     }
 
-    // ダイアログ表示
     showDialog(
       context: context,
       builder: (context) {
@@ -138,15 +146,16 @@ class _ResultScreenState extends State<ResultScreen> {
                 
                 // 選択された言語でGeminiを実行
                 _runGeminiTask(
+                  // ★編集後のテキスト(_textController.text)を渡す
                   () => _geminiService.translateText(
-                    _displayText,
-                    targetLang: entry.value, // Mapの値(Englishなど)を渡す
+                    _textController.text, 
+                    targetLang: entry.value,
                   ),
                 );
               },
               child: Padding(
                 padding: const EdgeInsets.symmetric(vertical: 8.0),
-                child: Text(entry.key, style: const TextStyle(fontSize: 16)), // Mapのキー(英語など)を表示
+                child: Text(entry.key, style: const TextStyle(fontSize: 16)),
               ),
             );
           }).toList(),
@@ -219,7 +228,8 @@ class _ResultScreenState extends State<ResultScreen> {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (context) => ShareScreen(textContent: _displayText),
+                  // ★シェア画面にも編集後のテキストを渡す
+                  builder: (context) => ShareScreen(textContent: _textController.text),
                 ),
               );
             },
@@ -299,8 +309,9 @@ class _ResultScreenState extends State<ResultScreen> {
                   const SizedBox(width: 10),
                   
                   ElevatedButton.icon(
+                    // ★要約時も編集後のテキストを渡す
                     onPressed: _isLoading ? null : () => _runGeminiTask(
-                      () => _geminiService.summarizeText(_displayText)
+                      () => _geminiService.summarizeText(_textController.text)
                     ),
                     icon: const Icon(Icons.summarize),
                     label: const Text('要約'),
@@ -320,7 +331,6 @@ class _ResultScreenState extends State<ResultScreen> {
                   const SizedBox(width: 10),
                   // ---------------------------
 
-                  // ★変更: 翻訳ボタン (ダイアログを表示)
                   ElevatedButton.icon(
                     onPressed: _isLoading ? null : _showTranslationDialog,
                     icon: const Icon(Icons.translate),
@@ -331,18 +341,25 @@ class _ResultScreenState extends State<ResultScreen> {
             ),
             const SizedBox(height: 20),
             
+            // ★変更点3: 表示エリアを TextField に変更して編集可能にする
             Expanded(
               child: _isLoading 
                 ? const Center(child: CircularProgressIndicator())
                 : Container(
                     width: double.infinity,
-                    padding: const EdgeInsets.all(8),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
                     decoration: BoxDecoration(
                       border: Border.all(color: Colors.grey),
                       borderRadius: BorderRadius.circular(8),
                     ),
-                    child: SingleChildScrollView(
-                      child: Text(_displayText),
+                    child: TextField( // ここをTextからTextFieldに変更
+                      controller: _textController,
+                      maxLines: null, // 行数無制限
+                      keyboardType: TextInputType.multiline, // 改行キーを表示
+                      decoration: const InputDecoration(
+                        border: InputBorder.none, // 枠線はContainerで描画してるので消す
+                      ),
+                      style: const TextStyle(fontSize: 16, height: 1.5), // 読みやすいように調整
                     ),
                   ),
             ),
