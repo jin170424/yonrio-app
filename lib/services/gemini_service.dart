@@ -32,11 +32,12 @@ class GeminiService {
       }
 
       final bytes = await file.readAsBytes();
-      
+
       // ★拡張子からMIMEタイプを自動判定
-      final extension = p.extension(audioPath).toLowerCase().replaceAll('.', '');
+      final extension =
+          p.extension(audioPath).toLowerCase().replaceAll('.', '');
       String mimeType;
-      
+
       switch (extension) {
         case 'mp3':
           mimeType = 'audio/mp3';
@@ -62,13 +63,12 @@ class GeminiService {
         Content.multi([
           TextPart('この音声を日本語で文字起こししてください。話者分離（Aさん、Bさん）もお願いします。'),
           // ★自動判定したmimeタイプを使う
-          DataPart(mimeType, bytes), 
+          DataPart(mimeType, bytes),
         ])
       ];
 
       final response = await _model.generateContent(content);
       return response.text ?? '（文字起こし結果が空でした）';
-
     } catch (e) {
       return 'AIエラー: $e';
     }
@@ -83,6 +83,25 @@ class GeminiService {
       return response.text ?? '（要約不可）';
     } catch (e) {
       return '要約エラー: $e';
+    }
+  }
+
+  Future<String> explainTerms(String text) async {
+    // textが空、または初期状態のメッセージの場合はエラーを返すか、何もしない
+    if (text == "（文字起こしボタンを押してください）" || text.isEmpty) {
+      return "解説するテキストがありません。まずは文字起こしを行ってください。";
+    }
+
+    try {
+      // Geminiへのプロンプト
+      final prompt =
+          "以下の文章の中から重要な専門用語や難しい言葉をいくつか抽出し、初心者にもわかりやすく解説してください。:\n\n$text";
+
+      final content = [Content.text(prompt)];
+      final response = await _model.generateContent(content);
+      return response.text ?? "解説が生成できませんでした。";
+    } catch (e) {
+      return "用語解説中にエラーが発生しました: $e";
     }
   }
 

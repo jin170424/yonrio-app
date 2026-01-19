@@ -21,7 +21,7 @@ class ResultScreen extends StatefulWidget {
 class _ResultScreenState extends State<ResultScreen> {
   final GeminiService _geminiService = GeminiService();
   final S3UploadService _s3UploadService = S3UploadService();
-  
+
   String _displayText = "（文字起こしボタンを押してください）";
   bool _isLoading = false;
 
@@ -34,60 +34,56 @@ class _ResultScreenState extends State<ResultScreen> {
     });
   }
 
-Future<void> s3Upload() async {
-  // ファイルパスの取得（TODO: 念のため空チェックいれる）
-  final file = File(widget.recording.filePath);
+  Future<void> s3Upload() async {
+    // ファイルパスの取得（TODO: 念のため空チェックいれる）
+    final file = File(widget.recording.filePath);
 
-  // トークンの取得処理
-  try {
-    final tokenService = GetIdtokenService();
-    final token = await tokenService.getIdtoken();
+    // トークンの取得処理
+    try {
+      final tokenService = GetIdtokenService();
+      final token = await tokenService.getIdtoken();
 
-    // トークンがない場合（未ログインなど）はここで終了
-    if (token == null) {
-      print("トークンが取得できませんでした（未ログイン）");
-      
+      // トークンがない場合（未ログインなど）はここで終了
+      if (token == null) {
+        print("トークンが取得できませんでした（未ログイン）");
+
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('ログインが必要です')),
+        );
+        return;
+      }
+
+      print("トークン取得成功: ${token.substring(0, 10)}...");
+
+      // アップロード処理
+      final uploadService = S3UploadService();
+
+      // アップロード実行
+      final result = await uploadService.uploadAudioFile(file, idToken: token);
+
+      // 成功時の処理
+      final fileId = result['file_id'];
+      final s3Key = result['s3_key'];
+
+      print("保存完了！ ID: $fileId");
+
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('ログインが必要です')),
+        SnackBar(content: Text('アップロード完了 (ID: $fileId)')),
       );
-      return;
+
+      // TODO: DynamoDB保存APIの呼び出しなどをここに記述
+    } catch (e) {
+      // エラーハンドリング
+      print("アップロード失敗: $e");
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('エラーが発生しました: $e')),
+      );
     }
-
-    print("トークン取得成功: ${token.substring(0, 10)}...");
-
-    // アップロード処理
-    final uploadService = S3UploadService();
-    
-    // アップロード実行
-    final result = await uploadService.uploadAudioFile(
-      file, 
-      idToken: token
-    );
-
-    // 成功時の処理
-    final fileId = result['file_id'];
-    final s3Key = result['s3_key'];
-    
-    print("保存完了！ ID: $fileId");
-
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('アップロード完了 (ID: $fileId)')),
-    );
-
-    // TODO: DynamoDB保存APIの呼び出しなどをここに記述
-
-  } catch (e) {
-    // エラーハンドリング
-    print("アップロード失敗: $e");
-    
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('エラーが発生しました: $e')),
-    );
   }
-}
 
   @override
   Widget build(BuildContext context) {
@@ -117,7 +113,7 @@ Future<void> s3Upload() async {
         child: Column(
           children: [
             // ファイル情報の表示（デバッグ用にも便利）
-            Text("ファイルパス: ${widget.recording.filePath}", 
+            Text("ファイルパス: ${widget.recording.filePath}",
                 style: const TextStyle(fontSize: 12, color: Colors.grey)),
             const SizedBox(height: 10),
 
@@ -126,21 +122,35 @@ Future<void> s3Upload() async {
               child: Row(
                 children: [
                   ElevatedButton.icon(
-                    onPressed: _isLoading ? null : () => _runGeminiTask(
-                      // ★ここで実際のファイルパスを渡す！
-                      () => _geminiService.transcribeAudio(widget.recording.filePath)
-                    ),
+                    onPressed: _isLoading
+                        ? null
+                        : () => _runGeminiTask(
+                            // ★ここで実際のファイルパスを渡す！
+                            () => _geminiService
+                                .transcribeAudio(widget.recording.filePath)),
                     icon: const Icon(Icons.mic),
                     label: const Text('文字起こし'),
                   ),
                   const SizedBox(width: 10),
-                  
+
                   ElevatedButton.icon(
-                    onPressed: _isLoading ? null : () => _runGeminiTask(
-                      () => _geminiService.summarizeText(_displayText)
-                    ),
+                    onPressed: _isLoading
+                        ? null
+                        : () => _runGeminiTask(
+                            () => _geminiService.summarizeText(_displayText)),
                     icon: const Icon(Icons.summarize),
                     label: const Text('要約'),
+                  ),
+                  const SizedBox(width: 10),
+
+                  ElevatedButton.icon(
+                    onPressed: _isLoading
+                        ? null
+                        : () => _runGeminiTask(() => _geminiService
+                                .explainTerms(_displayText) // Serviceにこのメソッドが必要
+                            ),
+                    icon: const Icon(Icons.menu_book),
+                    label: const Text('用語解説'),
                   ),
                   const SizedBox(width: 10),
 
@@ -158,9 +168,10 @@ Future<void> s3Upload() async {
                   // ---------------------------
 
                   ElevatedButton.icon(
-                    onPressed: _isLoading ? null : () => _runGeminiTask(
-                      () => _geminiService.translateText(_displayText)
-                    ),
+                    onPressed: _isLoading
+                        ? null
+                        : () => _runGeminiTask(
+                            () => _geminiService.translateText(_displayText)),
                     icon: const Icon(Icons.translate),
                     label: const Text('英語へ翻訳'),
                   ),
@@ -168,21 +179,21 @@ Future<void> s3Upload() async {
               ),
             ),
             const SizedBox(height: 20),
-            
+
             Expanded(
-              child: _isLoading 
-                ? const Center(child: CircularProgressIndicator())
-                : Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      border: Border.all(color: Colors.grey),
-                      borderRadius: BorderRadius.circular(8),
+              child: _isLoading
+                  ? const Center(child: CircularProgressIndicator())
+                  : Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(8),
+                      decoration: BoxDecoration(
+                        border: Border.all(color: Colors.grey),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: SingleChildScrollView(
+                        child: Text(_displayText),
+                      ),
                     ),
-                    child: SingleChildScrollView(
-                      child: Text(_displayText),
-                    ),
-                  ),
             ),
           ],
         ),
