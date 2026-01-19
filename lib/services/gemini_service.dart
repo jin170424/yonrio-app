@@ -5,7 +5,7 @@ import 'package:path/path.dart' as p;
 
 class GeminiService {
   // ★認証済みのキー（そのまま）
-  final String _apiKey = 'AIzaSyA5JJi6rRCabRmipr0L2-Y8jqFR65Tfj_I';
+  final String _apiKey = 'AIzaSyCtRXzfauIOU6-P1HMyyk9Rj7Qs5esm-4g';
 
   late final GenerativeModel _model;
 
@@ -86,10 +86,12 @@ class GeminiService {
     }
   }
 
-  Future<String> translateText(String text) async {
+  Future<String> translateText(String text, {String targetLang = 'English'}) async {
     if (text.isEmpty || text.contains("エラー")) return "翻訳するテキストがありません。";
     try {
-      final content = [Content.text('Translate to English:\n\n$text')];
+      // プロンプトに言語変数を埋め込みます
+      final content = [Content.text('Translate the following text to $targetLang:\n\n$text')];
+      
       final response = await _model.generateContent(content);
       return response.text ?? '（翻訳不可）';
     } catch (e) {
