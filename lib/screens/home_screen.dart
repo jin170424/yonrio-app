@@ -5,7 +5,7 @@ import 'package:intl/intl.dart';
 import 'package:amplify_flutter/amplify_flutter.dart';
 import 'package:file_picker/file_picker.dart'; 
 import 'package:path_provider/path_provider.dart'; 
-import 'package:share_plus/share_plus.dart'; 
+import 'package:image_picker/image_picker.dart'; 
 
 import '../models/recording.dart';
 import 'recording_screen.dart';
@@ -40,9 +40,9 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // ★名前変更ダイアログを表示する関数
+  // 名前変更ダイアログ
   void _showRenameDialog(Recording recording) {
-    final TextEditingController _controller = TextEditingController(text: recording.title);
+    final TextEditingController controller = TextEditingController(text: recording.title);
     
     showDialog(
       context: context, 
@@ -50,7 +50,7 @@ class _HomeScreenState extends State<HomeScreen> {
         return AlertDialog(
           title: const Text('名前を変更'),
           content: TextField(
-            controller: _controller,
+            controller: controller,
             decoration: const InputDecoration(hintText: "新しいタイトルを入力"),
             autofocus: true,
           ),
@@ -61,7 +61,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
             ElevatedButton(
               onPressed: () async {
-                final newTitle = _controller.text.trim();
+                final newTitle = controller.text.trim();
                 if (newTitle.isNotEmpty) {
                   final isar = Isar.getInstance();
                   if (isar != null) {
@@ -81,6 +81,92 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // ★追加: 削除確認ダイアログと削除実行
+  Future<void> _confirmAndDelete(Recording recording) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('削除しますか？'),
+          content: Text('「${recording.title}」を削除します。\nこの操作は元に戻せません。'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false), // いいえ
+              child: const Text('キャンセル'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(context, true), // はい
+              style: TextButton.styleFrom(foregroundColor: Colors.red),
+              child: const Text('削除する'),
+            ),
+          ],
+        );
+      },
+    );
+
+    if (confirmed == true) {
+      // 1. 実ファイルの削除 (スマホの容量を空けるため)
+      try {
+        final file = File(recording.filePath);
+        if (await file.exists()) {
+          await file.delete();
+        }
+      } catch (e) {
+        print("ファイル削除エラー: $e");
+        // ファイル削除に失敗してもDBからは消すように進める
+      }
+
+      // 2. データベース(Isar)から削除
+      final isar = Isar.getInstance();
+      if (isar != null) {
+        await isar.writeTxn(() async {
+          await isar.recordings.delete(recording.id);
+        });
+        
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('削除しました')),
+        );
+      }
+    }
+  }
+
+  // ★追加: 長押し時のメニューシート
+  void _showItemMenu(Recording recording) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.edit, color: Colors.blue),
+                title: const Text('名前を変更'),
+                onTap: () {
+                  Navigator.pop(context); // シートを閉じる
+                  _showRenameDialog(recording); // 名前変更へ
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.delete, color: Colors.red),
+                title: const Text('削除', style: TextStyle(color: Colors.red)),
+                onTap: () {
+                  Navigator.pop(context); // シートを閉じる
+                  _confirmAndDelete(recording); // 削除確認へ
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  // ... (インポート機能、画像保存機能はそのまま) ...
   Future<void> _importFile() async {
     try {
       final result = await FilePicker.platform.pickFiles(
@@ -122,27 +208,132 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _pickAndSaveImage(ImageSource source) async {
+    try {
+      final picker = ImagePicker();
+      final XFile? photo = await picker.pickImage(source: source);
+
+      if (photo == null) return;
+
+      if (!mounted) return;
+
+      showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (BuildContext context) {
+          return const Center(
+            child: CircularProgressIndicator(),
+          );
+        },
+      );
+
+      final appDir = await getApplicationDocumentsDirectory();
+      final fileName = 'ocr_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final savedImage = await File(photo.path).copy('${appDir.path}/$fileName');
+
+      final isar = Isar.getInstance();
+      if (isar != null) {
+        final newRecording = Recording()
+          ..title = "画像: ${DateFormat('MM/dd HH:mm').format(DateTime.now())}" 
+          ..filePath = savedImage.path
+          ..durationSeconds = 0 
+          ..createdAt = DateTime.now();
+
+        await isar.writeTxn(() async {
+          await isar.recordings.put(newRecording);
+        });
+      }
+
+      if (!mounted) return;
+
+      Navigator.pop(context); 
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('リストに追加しました')),
+      );
+
+    } catch (e) {
+      if (mounted && Navigator.canPop(context)) {
+         Navigator.pop(context);
+      }
+      print('画像保存エラー: $e');
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('エラーが発生しました: $e')),
+      );
+    }
+  }
+
+  void _showOcrSourceSelection() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          child: Wrap(
+            children: [
+              ListTile(
+                leading: const Icon(Icons.camera_alt, color: Colors.blue),
+                title: const Text('カメラで撮影'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickAndSaveImage(ImageSource.camera);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_library, color: Colors.green),
+                title: const Text('アルバムから選択'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _pickAndSaveImage(ImageSource.gallery);
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('録音リスト'),
+        title: const Text('録音・メモリスト'),
+        leading: IconButton(
+          icon: const Icon(Icons.logout),
+          onPressed: () async {
+            try {
+              await Amplify.Auth.signOut();
+              if (context.mounted) {
+                Navigator.pushAndRemoveUntil(
+                  context,
+                  MaterialPageRoute(builder: (context) => const LoginScreen()),
+                  (route) => false,
+                );
+              }
+            } on AuthException catch (e) {
+              safePrint('Error signing out: ${e.message}');
+            }
+          },
+        ),
         actions: [
           IconButton(
-            icon: const Icon(Icons.logout),
-            onPressed: () async {
-              try {
-                await Amplify.Auth.signOut();
-                if (context.mounted) {
-                  Navigator.of(context).pushReplacement(
-                    MaterialPageRoute(builder: (context) => const LoginScreen()),
-                  );
-                }
-              } on AuthException catch (e) {
-                safePrint('Error signing out: ${e.message}');
-              }
+             icon: const Icon(Icons.file_upload),
+             tooltip: "ファイルをインポート",
+             onPressed: _importFile,
+          ),
+          IconButton(
+            icon: const Icon(Icons.share),
+            tooltip: "リストを共有",
+            onPressed: () {
+               ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('リスト全体の共有機能は開発中です')),
+                );
             },
-          )
+          ),
         ],
       ),
       body: _recordingStream == null
@@ -155,24 +346,34 @@ class _HomeScreenState extends State<HomeScreen> {
                 }
                 final recordings = snapshot.data;
                 if (recordings == null || recordings.isEmpty) {
-                  return const Center(child: Text('録音・インポートしたファイルがありません'));
+                  return const Center(child: Text('データがありません'));
                 }
 
                 return ListView.builder(
                   itemCount: recordings.length,
                   itemBuilder: (context, index) {
                     final recording = recordings[index];
+                    
+                    final path = recording.filePath.toLowerCase();
+                    final fileName = path.split('/').last;
+
+                    IconData leadIcon = Icons.mic;
+                    Color iconColor = Colors.blue;
+                    
+                    if (path.endsWith('.jpg') || path.endsWith('.jpeg') || path.endsWith('.png')) {
+                      leadIcon = Icons.image;
+                      iconColor = Colors.purple;
+                    } else if (fileName.startsWith('imported_')) {
+                      leadIcon = Icons.folder;
+                      iconColor = Colors.orange;
+                    }
+
                     return Card(
                       child: ListTile(
-                        leading: Icon(
-                          recording.title.startsWith("インポート") 
-                              ? Icons.folder 
-                              : Icons.mic, 
-                          color: Colors.blue
-                        ),
+                        leading: Icon(leadIcon, color: iconColor),
                         title: Text(recording.title),
                         subtitle: Text(
-                          '${DateFormat('yyyy/MM/dd HH:mm').format(recording.createdAt)}'
+                          DateFormat('yyyy/MM/dd HH:mm').format(recording.createdAt)
                         ),
                         trailing: const Icon(Icons.chevron_right),
                         onTap: () {
@@ -183,9 +384,9 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                           );
                         },
-                        // ★ここを追加！長押しで名前変更
+                        // ★ここを変更: メニューを表示するように変更
                         onLongPress: () {
-                          _showRenameDialog(recording);
+                          _showItemMenu(recording);
                         },
                       ),
                     );
@@ -194,45 +395,18 @@ class _HomeScreenState extends State<HomeScreen> {
               },
             ),
 
-      floatingActionButton: Row(
-        mainAxisAlignment: MainAxisAlignment.end,
+      floatingActionButton: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           FloatingActionButton(
-            heroTag: 'logout',
-            mini: true,
-            backgroundColor: Colors.grey,
-            onPressed: () async {
-               await Amplify.Auth.signOut();
-               if (context.mounted) {
-                  Navigator.pushAndRemoveUntil(
-                    context,
-                    MaterialPageRoute(builder: (context) => const LoginScreen()),
-                    (route) => false,
-                  );
-               }
-            },
-            child: const Icon(Icons.logout),
+            heroTag: 'ocr',
+            mini: true, 
+            backgroundColor: Colors.purple,
+            onPressed: _showOcrSourceSelection, 
+            child: const Icon(Icons.camera_alt),
           ),
-          const SizedBox(width: 12),
-          FloatingActionButton(
-            heroTag: 'share',
-            mini: true,
-            backgroundColor: Colors.green,
-            onPressed: () {
-              ScaffoldMessenger.of(context).showSnackBar(
-                const SnackBar(content: Text('リスト全体の共有機能は開発中です')),
-              );
-            },
-            child: const Icon(Icons.share),
-          ),
-          const SizedBox(width: 12),
-          FloatingActionButton(
-            heroTag: 'import',
-            backgroundColor: Colors.orange,
-            onPressed: _importFile, 
-            child: const Icon(Icons.file_upload),
-          ),
-          const SizedBox(width: 12),
+          const SizedBox(height: 16),
           FloatingActionButton(
             heroTag: 'add',
             onPressed: () {

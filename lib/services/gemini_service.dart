@@ -2,10 +2,11 @@ import 'dart:io';
 import 'package:google_generative_ai/google_generative_ai.dart';
 // mimeタイプを判定するためにpathライブラリを使います（標準で入っています）
 import 'package:path/path.dart' as p;
+import 'package:image_picker/image_picker.dart';
 
 class GeminiService {
   // ★認証済みのキー（そのまま）
-  final String _apiKey = 'AIzaSyCtRXzfauIOU6-P1HMyyk9Rj7Qs5esm-4g';
+  final String _apiKey = 'AIzaSyBH8E_LzT3oCgBNjVLXJh1NJx7RVX_LkJE';
 
   late final GenerativeModel _model;
 
@@ -98,4 +99,37 @@ class GeminiService {
       return '翻訳エラー: $e';
     }
   }
+
+  Future<String> transcribeImage(File imageFile) async {
+    try {
+      if (!await imageFile.exists()) {
+        return "エラー: 画像ファイルが見つかりません";
+      }
+
+      final bytes = await imageFile.readAsBytes();
+      
+      // 拡張子判定 (簡易版)
+      final extension = p.extension(imageFile.path).toLowerCase();
+      String mimeType = 'image/jpeg'; // デフォルト
+      if (extension == '.png') mimeType = 'image/png';
+      if (extension == '.webp') mimeType = 'image/webp';
+      // HEICなどはJPEG変換が必要な場合がありますが、まずは基本形式で実装
+
+      final content = [
+        Content.multi([
+          // 単なるOCRなら「文字起こしして」でOKですが、
+          // Geminiなら「レシートの内容を表形式で」なども可能です
+          TextPart('この画像に写っている文字をすべて書き出してください。'),
+          DataPart(mimeType, bytes),
+        ])
+      ];
+
+      final response = await _model.generateContent(content);
+      return response.text ?? '（文字が検出できませんでした）';
+
+    } catch (e) {
+      return 'AIエラー: $e';
+    }
+  }
+
 }

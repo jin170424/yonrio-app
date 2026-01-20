@@ -25,6 +25,9 @@ dependencies:
   # 録音・再生（安定版）
   record: ^4.4.4
   just_audio: ^0.9.36
+
+  # 画像ピッカー
+  image_picker: ^1.0.7
   
   # ★ここを修正！ エラーの指示通り 0.4.7 にします（これでFlashも動きます）
   google_generative_ai: ^0.4.7
