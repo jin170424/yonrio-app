@@ -11,6 +11,8 @@ import '../models/recording.dart';
 import 'recording_screen.dart';
 import 'result_screen.dart';
 import 'login_screen.dart';
+import '../repositories/recording_repository.dart';
+import '../services/get_idtoken_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -21,11 +23,21 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   Stream<List<Recording>>? _recordingStream;
+  late final RecordingRepository _repository;
+  bool _isSyncing = false;
 
   @override
   void initState() {
     super.initState();
-    _initRecordingStream();
+
+    final isar = Isar.getInstance();
+    if (isar != null) {
+      _repository = RecordingRepository(isar);
+      _initRecordingStream();
+      _syncMetadataList();
+    }
+
+
   }
 
   void _initRecordingStream() {
@@ -39,6 +51,35 @@ class _HomeScreenState extends State<HomeScreen> {
       });
     }
   }
+
+Future<void> _syncMetadataList() async {
+    if (_isSyncing) return;
+
+    setState(() => _isSyncing = true);
+    try {
+      final tokenService = GetIdtokenService();
+      final token = await tokenService.getIdtoken();
+
+      if (token != null) {
+        await _repository.syncMetadataList(token);
+        print('メタデータ同期完了');
+      } else {
+        print('未ログインのため同期スキップ');
+      }
+    } catch (e) {
+      print('同期エラー: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('同期エラー: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSyncing = false);
+      }
+    }
+  }
+
 
   // ★インポート処理
   Future<void> _importFile() async {
@@ -91,6 +132,17 @@ class _HomeScreenState extends State<HomeScreen> {
       appBar: AppBar(
         title: const Text('録音リスト'),
         actions: [
+          IconButton(
+            icon: _isSyncing
+                ? const SizedBox(
+                    width: 20, 
+                    height: 20, 
+                    child: CircularProgressIndicator(strokeWidth: 2)
+                  )
+                : const Icon(Icons.sync),
+            tooltip: 'リストを更新',
+            onPressed: _isSyncing ? null : _syncMetadataList,
+          ),
           // 念のためAppBarにもログアウトボタンを置いておきます
           IconButton(
             icon: const Icon(Icons.logout),
