@@ -6,6 +6,7 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 // データベース(Isar)を使うためのライブラリ
 import 'package:isar/isar.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:voice_app/models/transcript_segment.dart';
 
 // 自分で作ったファイルを読み込む
 // ※ "voice_app" の部分は、pubspec.yamlのnameと同じにする
@@ -21,6 +22,8 @@ import 'package:amplify_flutter/amplify_flutter.dart';
 import 'package:internet_connection_checker_plus/internet_connection_checker_plus.dart';
 import 'services/network_service.dart';
 
+late Isar isar;
+
 // アプリのスタート地点
 void main() async {
   // アプリが起動する前に、必要な準備（データベースの準備など）をするためのおまじない
@@ -32,9 +35,13 @@ void main() async {
 
   // 2. Isarを開く
   // ここで開いておくと、アプリ中のどこからでも Isar.getInstance() で呼び出せるようになる
-  await Isar.open(
-    [RecordingSchema], // recording.g.dart で作られた「設計図」を渡す
+  isar = await Isar.open(
+    [
+      RecordingSchema,
+      TranscriptSegmentSchema,
+    ], // recording.g.dart で作られた「設計図」を渡す
     directory: dir.path, // 保存場所を指定
+    inspector: true,
   );
 
   NetworkService().initialize();

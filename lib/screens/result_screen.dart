@@ -53,7 +53,7 @@ class _ResultScreenState extends State<ResultScreen> {
     _textController = TextEditingController(
       text: (widget.recording.transcription != null && widget.recording.transcription!.isNotEmpty)
           ? widget.recording.transcription
-          : "（ボタンを押して解析を開始してください）" // 文言を少し変更
+          : "（ボタンを押して解析を開始してください）"
     );
 
     if (!_isImage) {
@@ -181,6 +181,7 @@ class _ResultScreenState extends State<ResultScreen> {
       final uploadService = S3UploadService();
       final result = await uploadService.uploadAudioFile(file, idToken: token);
       final fileId = result['file_id'];
+      // publicUrlなどの保存処理が必要であればここに追加してください
       
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -214,7 +215,10 @@ class _ResultScreenState extends State<ResultScreen> {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (context) => ShareScreen(textContent: _textController.text),
+                    builder: (context) => ShareScreen(
+                      textContent: _textController.text,
+                      // audioUrl: widget.recording.publicUrl, // DBにフィールドがあればコメントアウト解除
+                    ),
                   ),
                 );
               },
@@ -289,22 +293,18 @@ class _ResultScreenState extends State<ResultScreen> {
                 scrollDirection: Axis.horizontal,
                 child: Row(
                   children: [
-                    // ★修正: 1つのボタンで画像・音声を分岐実行
                     ElevatedButton.icon(
                       onPressed: _isLoading ? null : () {
                         if (_isImage) {
-                          // 画像の場合: OCRを実行
                           _runGeminiTask(
                             () => _geminiService.transcribeImage(File(widget.recording.filePath))
                           );
                         } else {
-                          // 音声の場合: 文字起こしを実行
                           _runGeminiTask(
                             () => _geminiService.transcribeAudio(widget.recording.filePath)
                           );
                         }
                       },
-                      // アイコンとラベルも切り替えるとお洒落です
                       icon: Icon(_isImage ? Icons.image_search : Icons.mic),
                       label: Text(_isImage ? '文字認識' : '文字起こし'),
                     ),

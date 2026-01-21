@@ -11,6 +11,11 @@ import '../models/recording.dart';
 import 'recording_screen.dart';
 import 'result_screen.dart';
 import 'login_screen.dart';
+import '../services/get_idtoken_service.dart';
+
+// ★チーム開発で追加されたと思われるリポジトリ
+// もしこのファイルがない場合は、作成するか、関連する行(_repositoryなど)をコメントアウトしてください
+import '../repositories/recording_repository.dart'; 
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -21,11 +26,21 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   Stream<List<Recording>>? _recordingStream;
+  
+  // ★同期機能用 (origin/main由来)
+  late final RecordingRepository _repository; 
+  bool _isSyncing = false;
 
   @override
   void initState() {
     super.initState();
-    _initRecordingStream();
+
+    final isar = Isar.getInstance();
+    if (isar != null) {
+      _repository = RecordingRepository(isar); // リポジトリ初期化
+      _initRecordingStream();
+      _syncMetadataList(); // 起動時に同期を試みる
+    }
   }
 
   void _initRecordingStream() {
@@ -37,6 +52,36 @@ class _HomeScreenState extends State<HomeScreen> {
             .sortByCreatedAtDesc()
             .watch(fireImmediately: true);
       });
+    }
+  }
+
+  // ★同期処理 (origin/main由来)
+  Future<void> _syncMetadataList() async {
+    if (_isSyncing) return;
+
+    setState(() => _isSyncing = true);
+    try {
+      final tokenService = GetIdtokenService();
+      final token = await tokenService.getIdtoken();
+
+      if (token != null) {
+        // リポジトリメソッドが存在しない場合はここをコメントアウトしてください
+        await _repository.syncMetadataList(token);
+        print('メタデータ同期完了');
+      } else {
+        print('未ログインのため同期スキップ');
+      }
+    } catch (e) {
+      print('同期エラー: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('同期エラー: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSyncing = false);
+      }
     }
   }
 
@@ -81,7 +126,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // ★追加: 削除確認ダイアログと削除実行
+  // 削除確認ダイアログ
   Future<void> _confirmAndDelete(Recording recording) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -91,11 +136,11 @@ class _HomeScreenState extends State<HomeScreen> {
           content: Text('「${recording.title}」を削除します。\nこの操作は元に戻せません。'),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(context, false), // いいえ
+              onPressed: () => Navigator.pop(context, false),
               child: const Text('キャンセル'),
             ),
             TextButton(
-              onPressed: () => Navigator.pop(context, true), // はい
+              onPressed: () => Navigator.pop(context, true),
               style: TextButton.styleFrom(foregroundColor: Colors.red),
               child: const Text('削除する'),
             ),
@@ -105,7 +150,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
 
     if (confirmed == true) {
-      // 1. 実ファイルの削除 (スマホの容量を空けるため)
       try {
         final file = File(recording.filePath);
         if (await file.exists()) {
@@ -113,10 +157,8 @@ class _HomeScreenState extends State<HomeScreen> {
         }
       } catch (e) {
         print("ファイル削除エラー: $e");
-        // ファイル削除に失敗してもDBからは消すように進める
       }
 
-      // 2. データベース(Isar)から削除
       final isar = Isar.getInstance();
       if (isar != null) {
         await isar.writeTxn(() async {
@@ -131,7 +173,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // ★追加: 長押し時のメニューシート
+  // 長押しメニュー
   void _showItemMenu(Recording recording) {
     showModalBottomSheet(
       context: context,
@@ -147,16 +189,16 @@ class _HomeScreenState extends State<HomeScreen> {
                 leading: const Icon(Icons.edit, color: Colors.blue),
                 title: const Text('名前を変更'),
                 onTap: () {
-                  Navigator.pop(context); // シートを閉じる
-                  _showRenameDialog(recording); // 名前変更へ
+                  Navigator.pop(context);
+                  _showRenameDialog(recording);
                 },
               ),
               ListTile(
                 leading: const Icon(Icons.delete, color: Colors.red),
                 title: const Text('削除', style: TextStyle(color: Colors.red)),
                 onTap: () {
-                  Navigator.pop(context); // シートを閉じる
-                  _confirmAndDelete(recording); // 削除確認へ
+                  Navigator.pop(context);
+                  _confirmAndDelete(recording);
                 },
               ),
             ],
@@ -166,7 +208,6 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // ... (インポート機能、画像保存機能はそのまま) ...
   Future<void> _importFile() async {
     try {
       final result = await FilePicker.platform.pickFiles(
@@ -221,9 +262,7 @@ class _HomeScreenState extends State<HomeScreen> {
         context: context,
         barrierDismissible: false,
         builder: (BuildContext context) {
-          return const Center(
-            child: CircularProgressIndicator(),
-          );
+          return const Center(child: CircularProgressIndicator());
         },
       );
 
@@ -245,7 +284,6 @@ class _HomeScreenState extends State<HomeScreen> {
       }
 
       if (!mounted) return;
-
       Navigator.pop(context); 
 
       ScaffoldMessenger.of(context).showSnackBar(
@@ -302,6 +340,7 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('録音・メモリスト'),
+        // ★左上にログアウト (HEADの仕様)
         leading: IconButton(
           icon: const Icon(Icons.logout),
           onPressed: () async {
@@ -319,12 +358,27 @@ class _HomeScreenState extends State<HomeScreen> {
             }
           },
         ),
+        // ★右上にアクション (origin/mainの同期ボタン + HEADのインポート/共有ボタン)
         actions: [
+          // 同期ボタン
+          IconButton(
+            icon: _isSyncing
+                ? const SizedBox(
+                    width: 20, 
+                    height: 20, 
+                    child: CircularProgressIndicator(strokeWidth: 2)
+                  )
+                : const Icon(Icons.sync),
+            tooltip: 'リストを更新',
+            onPressed: _isSyncing ? null : _syncMetadataList,
+          ),
+          // インポートボタン
           IconButton(
              icon: const Icon(Icons.file_upload),
              tooltip: "ファイルをインポート",
              onPressed: _importFile,
           ),
+          // 共有ボタン
           IconButton(
             icon: const Icon(Icons.share),
             tooltip: "リストを共有",
@@ -357,6 +411,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     final path = recording.filePath.toLowerCase();
                     final fileName = path.split('/').last;
 
+                    // 画像サムネイル表示ロジック (HEAD由来)
                     IconData leadIcon = Icons.mic;
                     Color iconColor = Colors.blue;
                     
@@ -384,7 +439,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                           );
                         },
-                        // ★ここを変更: メニューを表示するように変更
+                        // メニュー表示
                         onLongPress: () {
                           _showItemMenu(recording);
                         },
