@@ -230,6 +230,104 @@ Future<void> s3Upload(String title) async {
   }
 }
 
+  Widget _buildTranscriptionList(Recording recording) {
+    final segments = recording.transcripts.toList();
+
+    if (segments.isEmpty) {
+      SingleChildScrollView(
+        child: Text(
+          (recording.transcription != null && recording.transcription!.isNotEmpty)
+            ? recording.transcription!
+            : "文字起こしデータがありません",
+        ),
+      );
+    }
+
+    segments.sort((a, b) => a.startTimeMs.compareTo(b.startTimeMs));
+
+    return ListView.builder(
+      itemCount: segments.length,
+      padding: const EdgeInsets.only(bottom: 80),
+      itemBuilder: (context, index) {
+        final segment = segments[index];
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8.0, horizontal:4.0),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // 話者ラベル
+              Padding(
+                padding: const EdgeInsets.only(left: 8.0, bottom: 4.0),
+                child: Text(
+                  segment.speaker,
+                  style: const TextStyle(
+                    fontWeight: FontWeight.bold,
+                    fontSize: 12,
+                    color:Colors.grey,
+                  ),
+                ),
+              ),
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: Colors.grey.shade300),
+                  boxShadow: [
+                    BoxShadow(
+                      color: Colors.grey.withOpacity(0.1),
+                      blurRadius: 4,
+                      offset: const Offset(0, 2),
+                    )
+                  ],
+                ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      segment.text, // 原文
+                      style: const TextStyle(fontSize: 15, height: 1.4),
+                    ),
+                    // 翻訳がある場合はここに表示する拡張も可能
+                    if (segment.translations != null && segment.translations!.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8.0),
+                        child: Text(
+                          segment.translations!.first.text ?? "",
+                          style: const TextStyle(color: Colors.blueGrey),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  Widget _buildSummaryView(Recording recording) {
+    final text = (recording.summary != null && recording.summary!.isNotEmpty) 
+            ? recording.summary!
+            : "要約はまだありません (同期中または生成待ち)";
+            
+    return SingleChildScrollView(
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+           color: Colors.orange.withOpacity(0.05), // 要約だとわかるように背景色を少し変える
+            borderRadius: BorderRadius.circular(8),
+            border: Border.all(color: Colors.orange.withOpacity(0.2)),
+        ),
+        child: Text(text, style: const TextStyle(fontSize: 16)),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<Recording?>
@@ -243,23 +341,23 @@ Future<void> s3Upload(String title) async {
           return const Scaffold(body: Center(child: Text('データが見つかりません')));
         }
 
-        // 表示するテキストの決定
-        String displayText;
-        if (_currentMode == DisplayMode.summary){
-          displayText = (recording.summary != null && recording.summary!.isNotEmpty) 
-            ? recording.summary!
-            : "要約はまだありません (同期中または生成待ち)";
-        }else {
-          displayText = (recording.transcription != null && recording.transcription!.isNotEmpty)
-              ? recording.transcription!
-              : "文字起こしはまだありません (同期中または生成待ち)";
-        }
+        // // 表示するテキストの決定
+        // String displayText;
+        // if (_currentMode == DisplayMode.summary){
+        //   displayText = (recording.summary != null && recording.summary!.isNotEmpty) 
+        //     ? recording.summary!
+        //     : "要約はまだありません (同期中または生成待ち)";
+        // }else {
+        //   displayText = (recording.transcription != null && recording.transcription!.isNotEmpty)
+        //       ? recording.transcription!
+        //       : "文字起こしはまだありません (同期中または生成待ち)";
+        // }
         final String shareContent = "【要約】\n${_summaryText ?? 'なし'}\n\n【全文】\n${_transcriptionText ?? 'なし'}";
         return Scaffold(
-      appBar: AppBar(
-        // タイトルを受け取ったデータの日付などにする
-        title: Text(widget.recording.title),
-        actions: [
+          appBar: AppBar(
+          // タイトルを受け取ったデータの日付などにする
+          title: Text(widget.recording.title),
+          actions: [
           // クラウドと同期
           if (widget.recording.remoteId != null)
             IconButton(
@@ -267,16 +365,16 @@ Future<void> s3Upload(String title) async {
               tooltip: 'クラウドから結果を取得',
               onPressed: _isProcessing ? null : () => _manualSync(),
             ),
-          IconButton(
-            icon: const Icon(Icons.share),
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => ShareScreen(textContent: shareContent),
-                ),
-              );
-            },
+            IconButton(
+              icon: const Icon(Icons.share),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => ShareScreen(textContent: shareContent),
+                  ),
+                );
+              },
           ),
         ],
       ),
@@ -356,17 +454,20 @@ Future<void> s3Upload(String title) async {
             Expanded(
               child: _isLoading 
                 ? const Center(child: CircularProgressIndicator())
-                : Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(
-                      border: Border.all(color: Colors.grey),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: SingleChildScrollView(
-                      child: Text(displayText),
-                    ),
-                  ),
+                : _currentMode == DisplayMode.summary
+                  ? _buildSummaryView(recording)
+                  :_buildTranscriptionList(recording)
+                // : Container(
+                //     width: double.infinity,
+                //     padding: const EdgeInsets.all(8),
+                //     decoration: BoxDecoration(
+                //       border: Border.all(color: Colors.grey),
+                //       borderRadius: BorderRadius.circular(8),
+                //     ),
+                //     child: SingleChildScrollView(
+                //       child: Text(displayText),
+                //     ),
+                //   ),
             ),
           ],
         ),
