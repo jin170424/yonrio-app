@@ -1,11 +1,15 @@
 import 'dart:async';
 import 'dart:io';
+// ★追加: ランダムID生成用
+import 'dart:math';
 import 'package:flutter/material.dart';
-import 'package:record/record.dart'; // v4.4.4
+import 'package:record/record.dart'; 
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:isar/isar.dart';
 import 'package:intl/intl.dart';
+import 'package:amplify_flutter/amplify_flutter.dart';
+
 import '../models/recording.dart'; 
 
 class RecordingScreen extends StatefulWidget {
@@ -34,19 +38,24 @@ class _RecordingScreenState extends State<RecordingScreen> {
     return '$minutes:$secs';
   }
 
+  // ★追加: 一時的なユニークID生成
+  String _generateUniqueId() {
+    final random = Random();
+    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    return List.generate(20, (index) => chars[random.nextInt(chars.length)]).join();
+  }
+
   Future<void> _startRecording() async {
     try {
       if (await _audioRecorder.hasPermission()) {
         final directory = await getApplicationDocumentsDirectory();
         
-        // ★修正: 拡張子を .wav に変更 (エミュレータ対策)
         final now = DateTime.now();
         final fileName = 'recording_${DateFormat('yyyyMMdd_HHmmss').format(now)}.wav';
         final path = '${directory.path}/$fileName';
 
         await _audioRecorder.start(
           path: path,
-          // ★修正: エンコーダーを wav に変更 (これで音が途切れなくなります)
           encoder: AudioEncoder.wav, 
         );
 
@@ -65,7 +74,6 @@ class _RecordingScreenState extends State<RecordingScreen> {
 
   Future<void> _stopRecording() async {
     _timer?.cancel();
-    // ここでアプリが落ちる場合は、実機で試すかWAVに戻してください
     final path = await _audioRecorder.stop();
     
     setState(() {
@@ -85,11 +93,26 @@ class _RecordingScreenState extends State<RecordingScreen> {
   Future<void> _saveToIsar(String filePath, int duration) async {
     final isar = Isar.getInstance();
     if (isar != null) {
+
+      String currentUserId = 'unknown_user';
+      try {
+        final user = await Amplify.Auth.getCurrentUser();
+        currentUserId = user.userId;
+      } catch (e) {
+        print("Auth error (offline or not logged in): $e");
+      }
+
       final newRecording = Recording()
         ..title = DateFormat('yyyy/MM/dd HH:mmの録音').format(DateTime.now())
         ..filePath = filePath
         ..durationSeconds = duration
-        ..createdAt = DateTime.now();
+        ..createdAt = DateTime.now()
+        ..updatedAt = DateTime.now()
+        ..lastSyncTime = DateTime.fromMillisecondsSinceEpoch(0)
+        ..ownerName = currentUserId
+        // ★修正: nullだと重複扱いされるため、一時的なIDを生成
+        ..remoteId = _generateUniqueId()
+        ..status = 'pending';
 
       await isar.writeTxn(() async {
         await isar.recordings.put(newRecording);
