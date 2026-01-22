@@ -1,4 +1,6 @@
 import 'dart:io'; 
+// ★追加: ランダムID生成用
+import 'dart:math'; 
 import 'package:flutter/material.dart';
 import 'package:isar/isar.dart';
 import 'package:intl/intl.dart';
@@ -11,6 +13,8 @@ import '../models/recording.dart';
 import 'recording_screen.dart';
 import 'result_screen.dart';
 import 'login_screen.dart';
+import '../repositories/recording_repository.dart';
+import '../services/get_idtoken_service.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -21,11 +25,19 @@ class HomeScreen extends StatefulWidget {
 
 class _HomeScreenState extends State<HomeScreen> {
   Stream<List<Recording>>? _recordingStream;
+  late final RecordingRepository _repository;
+  bool _isSyncing = false;
 
   @override
   void initState() {
     super.initState();
-    _initRecordingStream();
+
+    final isar = Isar.getInstance();
+    if (isar != null) {
+      _repository = RecordingRepository(isar);
+      _initRecordingStream();
+      _syncMetadataList();
+    }
   }
 
   void _initRecordingStream() {
@@ -39,6 +51,15 @@ class _HomeScreenState extends State<HomeScreen> {
       });
     }
   }
+
+  // ★追加: 一時的なユニークIDを生成する関数
+  String _generateUniqueId() {
+    final random = Random();
+    const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    return List.generate(20, (index) => chars[random.nextInt(chars.length)]).join();
+  }
+
+  // --- HEAD由来の機能: 名前変更・削除・メニュー ---
 
   // 名前変更ダイアログ
   void _showRenameDialog(Recording recording) {
@@ -81,7 +102,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // ★追加: 削除確認ダイアログと削除実行
+  // 削除確認ダイアログと削除実行
   Future<void> _confirmAndDelete(Recording recording) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -131,7 +152,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // ★追加: 長押し時のメニューシート
+  // 長押し時のメニューシート
   void _showItemMenu(Recording recording) {
     showModalBottomSheet(
       context: context,
@@ -166,7 +187,38 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // ... (インポート機能、画像保存機能はそのまま) ...
+  // --- origin/main由来の機能: 同期 ---
+
+  Future<void> _syncMetadataList() async {
+    if (_isSyncing) return;
+
+    setState(() => _isSyncing = true);
+    try {
+      final tokenService = GetIdtokenService();
+      final token = await tokenService.getIdtoken();
+
+      if (token != null) {
+        await _repository.syncMetadataList(token);
+        print('メタデータ同期完了');
+      } else {
+        print('未ログインのため同期スキップ');
+      }
+    } catch (e) {
+      print('同期エラー: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('同期エラー: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isSyncing = false);
+      }
+    }
+  }
+
+  // --- 共通機能 ---
+
   Future<void> _importFile() async {
     try {
       final result = await FilePicker.platform.pickFiles(
@@ -182,13 +234,28 @@ class _HomeScreenState extends State<HomeScreen> {
         final newPath = '${appDir.path}/imported_$fileName';
         await File(originalPath).copy(newPath);
 
+        // ユーザーIDを取得して ownerName に入れる
+        String currentUserId = 'unknown_user';
+        try {
+            final user = await Amplify.Auth.getCurrentUser();
+            currentUserId = user.userId;
+        } catch(e) {
+            print("ユーザーID取得失敗(インポート): $e");
+        }
+
         final isar = Isar.getInstance();
         if (isar != null) {
           final newRecording = Recording()
             ..title = "インポート: $fileName" 
             ..filePath = newPath
             ..durationSeconds = 0 
-            ..createdAt = DateTime.now();
+            ..createdAt = DateTime.now()
+            ..updatedAt = DateTime.now()
+            ..lastSyncTime = DateTime.fromMillisecondsSinceEpoch(0)
+            ..ownerName = currentUserId
+            // ★修正: nullだと重複扱いされるため、一時的なIDを生成
+            ..remoteId = _generateUniqueId()
+            ..status = 'pending'; 
 
           await isar.writeTxn(() async {
             await isar.recordings.put(newRecording);
@@ -231,13 +298,28 @@ class _HomeScreenState extends State<HomeScreen> {
       final fileName = 'ocr_${DateTime.now().millisecondsSinceEpoch}.jpg';
       final savedImage = await File(photo.path).copy('${appDir.path}/$fileName');
 
+      // ユーザーIDを取得して ownerName に入れる
+      String currentUserId = 'unknown_user';
+      try {
+          final user = await Amplify.Auth.getCurrentUser();
+          currentUserId = user.userId;
+      } catch(e) {
+          print("ユーザーID取得失敗(画像保存): $e");
+      }
+
       final isar = Isar.getInstance();
       if (isar != null) {
         final newRecording = Recording()
           ..title = "画像: ${DateFormat('MM/dd HH:mm').format(DateTime.now())}" 
           ..filePath = savedImage.path
           ..durationSeconds = 0 
-          ..createdAt = DateTime.now();
+          ..createdAt = DateTime.now()
+          ..updatedAt = DateTime.now()
+          ..lastSyncTime = DateTime.fromMillisecondsSinceEpoch(0)
+          ..ownerName = currentUserId
+          // ★修正: nullだと重複扱いされるため、一時的なIDを生成
+          ..remoteId = _generateUniqueId()
+          ..status = 'pending';
 
         await isar.writeTxn(() async {
           await isar.recordings.put(newRecording);
@@ -302,24 +384,18 @@ class _HomeScreenState extends State<HomeScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('録音・メモリスト'),
-        leading: IconButton(
-          icon: const Icon(Icons.logout),
-          onPressed: () async {
-            try {
-              await Amplify.Auth.signOut();
-              if (context.mounted) {
-                Navigator.pushAndRemoveUntil(
-                  context,
-                  MaterialPageRoute(builder: (context) => const LoginScreen()),
-                  (route) => false,
-                );
-              }
-            } on AuthException catch (e) {
-              safePrint('Error signing out: ${e.message}');
-            }
-          },
-        ),
         actions: [
+          IconButton(
+            icon: _isSyncing
+                ? const SizedBox(
+                    width: 20, 
+                    height: 20, 
+                    child: CircularProgressIndicator(strokeWidth: 2)
+                  )
+                : const Icon(Icons.sync),
+            tooltip: 'リストを更新',
+            onPressed: _isSyncing ? null : _syncMetadataList,
+          ),
           IconButton(
              icon: const Icon(Icons.file_upload),
              tooltip: "ファイルをインポート",
@@ -332,6 +408,24 @@ class _HomeScreenState extends State<HomeScreen> {
                ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('リスト全体の共有機能は開発中です')),
                 );
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.logout),
+            tooltip: "ログアウト",
+            onPressed: () async {
+              try {
+                await Amplify.Auth.signOut();
+                if (context.mounted) {
+                  Navigator.pushAndRemoveUntil(
+                    context,
+                    MaterialPageRoute(builder: (context) => const LoginScreen()),
+                    (route) => false,
+                  );
+                }
+              } on AuthException catch (e) {
+                safePrint('Error signing out: ${e.message}');
+              }
             },
           ),
         ],
@@ -384,7 +478,6 @@ class _HomeScreenState extends State<HomeScreen> {
                             ),
                           );
                         },
-                        // ★ここを変更: メニューを表示するように変更
                         onLongPress: () {
                           _showItemMenu(recording);
                         },

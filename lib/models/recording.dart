@@ -1,4 +1,6 @@
+import 'package:flutter/material.dart';
 import 'package:isar/isar.dart';
+import 'package:voice_app/models/transcript_segment.dart';
 
 // ファイル名と同じにする必要がある (コード生成用)
 part 'recording.g.dart';
@@ -7,6 +9,12 @@ part 'recording.g.dart';
 class Recording {
   // 自動採番のID
   Id id = Isar.autoIncrement;
+
+  // DynamoDBのid(UUID)
+  @Index(unique: true, replace:true)
+  late String? remoteId;
+
+  late String ownerName;
 
   // タイトル (検索用にインデックスを貼る)
   @Index(type: IndexType.value)
@@ -22,13 +30,39 @@ class Recording {
   @Index()
   late DateTime createdAt;
 
-  // 文字起こしテキスト (全文検索用)
+  // 更新日時
+  @Index()
+  late DateTime updatedAt;
+
+  // ストリーミング再生用
+  String? s3AudioUrl;
+
+  // 翻訳データの再取得や同期用
+  String? s3TranscriptJsonUrl;
+
+  // 共有データの管理用(自分が作成したものか、共有されたものか)
+  // 削除時にS3を消していいかの判定ロジックに使用
+  String? sourceOriginalId;
+
+  // DynamoDBのstatus
+  late String status;
+
+  // 文字起こしテキスト全文
   @Index(type: IndexType.value)
   String? transcription;
 
   // AI要約
   String? summary;
+
+  late DateTime lastSyncTime;
+
+  List<SharedUser>? sharedWith;
   
-  // タグなどのリンクはここに追加
-  // final tags = IsarLinks<Tag>();
+  final transcripts = IsarLinks<TranscriptSegment>();
+}
+
+@embedded
+class SharedUser {
+  String? userId;
+  String? name;
 }
