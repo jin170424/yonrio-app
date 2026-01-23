@@ -227,7 +227,12 @@ int _recordingEstimateSize(
       bytesCount += 3 + value.length * 3;
     }
   }
-  bytesCount += 3 + object.status.length * 3;
+  {
+    final value = object.status;
+    if (value != null) {
+      bytesCount += 3 + value.length * 3;
+    }
+  }
   {
     final value = object.summary;
     if (value != null) {
@@ -283,7 +288,7 @@ Recording _recordingDeserialize(
   object.durationSeconds = reader.readLong(offsets[1]);
   object.filePath = reader.readString(offsets[2]);
   object.id = id;
-  object.lastSyncTime = reader.readDateTime(offsets[3]);
+  object.lastSyncTime = reader.readDateTimeOrNull(offsets[3]);
   object.ownerName = reader.readString(offsets[4]);
   object.remoteId = reader.readStringOrNull(offsets[5]);
   object.s3AudioUrl = reader.readStringOrNull(offsets[6]);
@@ -295,7 +300,7 @@ Recording _recordingDeserialize(
     SharedUser(),
   );
   object.sourceOriginalId = reader.readStringOrNull(offsets[9]);
-  object.status = reader.readString(offsets[10]);
+  object.status = reader.readStringOrNull(offsets[10]);
   object.summary = reader.readStringOrNull(offsets[11]);
   object.title = reader.readString(offsets[12]);
   object.transcription = reader.readStringOrNull(offsets[13]);
@@ -317,7 +322,7 @@ P _recordingDeserializeProp<P>(
     case 2:
       return (reader.readString(offset)) as P;
     case 3:
-      return (reader.readDateTime(offset)) as P;
+      return (reader.readDateTimeOrNull(offset)) as P;
     case 4:
       return (reader.readString(offset)) as P;
     case 5:
@@ -336,7 +341,7 @@ P _recordingDeserializeProp<P>(
     case 9:
       return (reader.readStringOrNull(offset)) as P;
     case 10:
-      return (reader.readString(offset)) as P;
+      return (reader.readStringOrNull(offset)) as P;
     case 11:
       return (reader.readStringOrNull(offset)) as P;
     case 12:
@@ -1364,8 +1369,26 @@ extension RecordingQueryFilter
     });
   }
 
+  QueryBuilder<Recording, Recording, QAfterFilterCondition>
+      lastSyncTimeIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNull(
+        property: r'lastSyncTime',
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterFilterCondition>
+      lastSyncTimeIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNotNull(
+        property: r'lastSyncTime',
+      ));
+    });
+  }
+
   QueryBuilder<Recording, Recording, QAfterFilterCondition> lastSyncTimeEqualTo(
-      DateTime value) {
+      DateTime? value) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.equalTo(
         property: r'lastSyncTime',
@@ -1376,7 +1399,7 @@ extension RecordingQueryFilter
 
   QueryBuilder<Recording, Recording, QAfterFilterCondition>
       lastSyncTimeGreaterThan(
-    DateTime value, {
+    DateTime? value, {
     bool include = false,
   }) {
     return QueryBuilder.apply(this, (query) {
@@ -1390,7 +1413,7 @@ extension RecordingQueryFilter
 
   QueryBuilder<Recording, Recording, QAfterFilterCondition>
       lastSyncTimeLessThan(
-    DateTime value, {
+    DateTime? value, {
     bool include = false,
   }) {
     return QueryBuilder.apply(this, (query) {
@@ -1403,8 +1426,8 @@ extension RecordingQueryFilter
   }
 
   QueryBuilder<Recording, Recording, QAfterFilterCondition> lastSyncTimeBetween(
-    DateTime lower,
-    DateTime upper, {
+    DateTime? lower,
+    DateTime? upper, {
     bool includeLower = true,
     bool includeUpper = true,
   }) {
@@ -2264,8 +2287,24 @@ extension RecordingQueryFilter
     });
   }
 
+  QueryBuilder<Recording, Recording, QAfterFilterCondition> statusIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNull(
+        property: r'status',
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterFilterCondition> statusIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNotNull(
+        property: r'status',
+      ));
+    });
+  }
+
   QueryBuilder<Recording, Recording, QAfterFilterCondition> statusEqualTo(
-    String value, {
+    String? value, {
     bool caseSensitive = true,
   }) {
     return QueryBuilder.apply(this, (query) {
@@ -2278,7 +2317,7 @@ extension RecordingQueryFilter
   }
 
   QueryBuilder<Recording, Recording, QAfterFilterCondition> statusGreaterThan(
-    String value, {
+    String? value, {
     bool include = false,
     bool caseSensitive = true,
   }) {
@@ -2293,7 +2332,7 @@ extension RecordingQueryFilter
   }
 
   QueryBuilder<Recording, Recording, QAfterFilterCondition> statusLessThan(
-    String value, {
+    String? value, {
     bool include = false,
     bool caseSensitive = true,
   }) {
@@ -2308,8 +2347,8 @@ extension RecordingQueryFilter
   }
 
   QueryBuilder<Recording, Recording, QAfterFilterCondition> statusBetween(
-    String lower,
-    String upper, {
+    String? lower,
+    String? upper, {
     bool includeLower = true,
     bool includeUpper = true,
     bool caseSensitive = true,
@@ -3437,7 +3476,7 @@ extension RecordingQueryProperty
     });
   }
 
-  QueryBuilder<Recording, DateTime, QQueryOperations> lastSyncTimeProperty() {
+  QueryBuilder<Recording, DateTime?, QQueryOperations> lastSyncTimeProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'lastSyncTime');
     });
@@ -3482,7 +3521,7 @@ extension RecordingQueryProperty
     });
   }
 
-  QueryBuilder<Recording, String, QQueryOperations> statusProperty() {
+  QueryBuilder<Recording, String?, QQueryOperations> statusProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'status');
     });

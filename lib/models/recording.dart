@@ -12,7 +12,7 @@ class Recording {
 
   // DynamoDBのid(UUID)
   @Index(unique: true, replace:true)
-  late String? remoteId;
+  String? remoteId;
 
   late String ownerName;
 
@@ -28,11 +28,11 @@ class Recording {
 
   // 作成日時 (並び替え用)
   @Index()
-  late DateTime createdAt;
+  DateTime createdAt = DateTime.now();
 
   // 更新日時
   @Index()
-  late DateTime updatedAt;
+  DateTime updatedAt = DateTime.now();
 
   // ストリーミング再生用
   String? s3AudioUrl;
@@ -45,7 +45,7 @@ class Recording {
   String? sourceOriginalId;
 
   // DynamoDBのstatus
-  late String status;
+  late String? status;
 
   // 文字起こしテキスト全文
   @Index(type: IndexType.value)
@@ -54,7 +54,7 @@ class Recording {
   // AI要約
   String? summary;
 
-  late DateTime lastSyncTime;
+  DateTime? lastSyncTime;
 
   List<SharedUser>? sharedWith;
   

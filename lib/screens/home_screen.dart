@@ -1,11 +1,13 @@
 import 'dart:io'; // File操作用
 import 'package:flutter/material.dart';
+import 'package:internet_connection_checker_plus/internet_connection_checker_plus.dart';
 import 'package:isar/isar.dart';
 import 'package:intl/intl.dart';
 import 'package:amplify_flutter/amplify_flutter.dart';
 import 'package:file_picker/file_picker.dart'; // インポート用
 import 'package:path_provider/path_provider.dart'; // パス取得用
 import 'package:share_plus/share_plus.dart'; // 共有用
+import 'package:voice_app/utils/network_utils.dart';
 
 import '../models/recording.dart';
 import 'recording_screen.dart';
@@ -34,10 +36,8 @@ class _HomeScreenState extends State<HomeScreen> {
     if (isar != null) {
       _repository = RecordingRepository(isar);
       _initRecordingStream();
-      _syncMetadataList();
+      _quietSyncOnStartup();
     }
-
-
   }
 
   void _initRecordingStream() {
@@ -49,6 +49,20 @@ class _HomeScreenState extends State<HomeScreen> {
             .sortByCreatedAtDesc()
             .watch(fireImmediately: true);
       });
+    }
+  }
+
+  Future<void> _quietSyncOnStartup() async {
+    // ネット接続確認
+    final bool isConnected = await InternetConnection().hasInternetAccess;
+    if (!isConnected) {
+      print("ホーム画面: オフラインのため起動時の同期をスキップしました");
+      return;
+    }
+    
+    // 画面が生きていれば同期実行
+    if (mounted) {
+      await _syncMetadataList();
     }
   }
 
@@ -80,6 +94,30 @@ Future<void> _syncMetadataList() async {
     }
   }
 
+  Future<String?> getPreferredUsername() async {
+  try {
+    final attributes = await Amplify.Auth.fetchUserAttributes();
+
+    for (final element in attributes) {
+      // CognitoUserAttributeKey.preferredUsername を使用して比較
+      if (element.userAttributeKey == CognitoUserAttributeKey.preferredUsername) {
+        return element.value;
+      }
+    }
+    
+    // 見つからなかった場合
+    print('preferred_username is not set for this user.');
+    return null;
+
+  } on AuthException catch (e) {
+    // ログインしていない、またはセッション切れの場合などのエラー処理
+    print('Error fetching user attributes: ${e.message}');
+    return null;
+  } catch (e) {
+    print('Unknown error: $e');
+    return null;
+  }
+}
 
   // ★インポート処理
   Future<void> _importFile() async {
@@ -91,8 +129,32 @@ Future<void> _syncMetadataList() async {
       );
 
       if (result != null && result.files.single.path != null) {
-        final originalPath = result.files.single.path!;
-        final fileName = result.files.single.name;
+        await runWithNetworkCheck(
+          context: context,
+          action: () async {
+            await _processImport(result.files.single.path!, result.files.single.name);
+          }
+        );
+      }
+    } catch (e) {
+      print('インポート前処理エラー: $e');
+    }
+  }
+  
+  Future<void> _processImport(String originalPath, String fileName) async {
+    final ownerName = await getPreferredUsername();
+      try{
+        if (ownerName == null) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('ユーザー情報が取得できません。再ログインしてください。')),
+          );
+
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (context) => const LoginScreen()),
+          );
+          return;
+        }
 
         // アプリ内の安全な場所にコピーする
         final appDir = await getApplicationDocumentsDirectory();
@@ -105,8 +167,10 @@ Future<void> _syncMetadataList() async {
           final newRecording = Recording()
             ..title = "インポート: $fileName" 
             ..filePath = newPath
-            ..durationSeconds = 0 
-            ..createdAt = DateTime.now();
+            ..ownerName = ownerName
+            ..durationSeconds = 0
+            ..createdAt = DateTime.now()
+            ..status = "processing";
 
           await isar.writeTxn(() async {
             await isar.recordings.put(newRecording);
@@ -117,7 +181,6 @@ Future<void> _syncMetadataList() async {
             const SnackBar(content: Text('ファイルをインポートしました')),
           );
         }
-      }
     } catch (e) {
       print('インポートエラー: $e');
       ScaffoldMessenger.of(context).showSnackBar(
@@ -141,7 +204,14 @@ Future<void> _syncMetadataList() async {
                   )
                 : const Icon(Icons.sync),
             tooltip: 'リストを更新',
-            onPressed: _isSyncing ? null : _syncMetadataList,
+            onPressed: _isSyncing 
+            ? null 
+            : () {
+              runWithNetworkCheck(
+                context: context, 
+                action: _syncMetadataList
+              );
+              },
           ),
           // 念のためAppBarにもログアウトボタンを置いておきます
           IconButton(
