@@ -53,7 +53,7 @@ class _ResultScreenState extends State<ResultScreen> {
     'ドイツ語': 'German',
   };
   bool _isUploading = false;
-  String _uploadStatusText = 'アップロード';
+  String _uploadStatusText = '保存';
 
   @override
   void initState() {
@@ -263,6 +263,10 @@ class _ResultScreenState extends State<ResultScreen> {
   // }
 
 Future<void> s3Upload(String title) async {
+  setState(() {
+    _isUploading = true;
+    _uploadStatusText = '保存中...';
+  });
   // ファイルパスの取得（TODO: 念のため空チェックいれる）
   final file = File(widget.recording.filePath);
 
