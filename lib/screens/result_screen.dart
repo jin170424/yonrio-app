@@ -6,12 +6,14 @@ import 'dart:io';
 // Main由来
 import 'package:internet_connection_checker_plus/internet_connection_checker_plus.dart';
 import 'package:voice_app/repositories/recording_repository.dart';
+import 'package:voice_app/services/s3download_service.dart';
 import 'package:voice_app/utils/network_utils.dart';
 import '../services/gemini_service.dart';
 import '../models/recording.dart';
 import 'share_screen.dart';
 import '../services/s3upload_service.dart';
 import '../services/get_idtoken_service.dart';
+import '../services/s3download_service.dart';
 import '../main.dart'; // isarインスタンス取得用
 
 enum DisplayMode { transcription, summary }
@@ -85,31 +87,107 @@ class _ResultScreenState extends State<ResultScreen> {
   }
 
   // --- Audio Player Logic (HEAD由来) ---
+  // Future<void> _initAudioPlayer() async {
+  //   try {
+  //     if (await File(widget.recording.filePath).exists()) {
+  //       _audioPlayer.positionStream.listen((p) {
+  //         if (mounted) setState(() => _position = p);
+  //       });
+  //       _audioPlayer.durationStream.listen((d) {
+  //         if (mounted) setState(() => _duration = d ?? Duration.zero);
+  //       });
+  //       _audioPlayer.playerStateStream.listen((state) {
+  //         if (mounted) {
+  //           setState(() {
+  //             _isPlaying = state.playing;
+  //           });
+  //           if (state.processingState == ProcessingState.completed) {
+  //             _audioPlayer.seek(Duration.zero);
+  //             _audioPlayer.pause();
+  //           }
+  //         }
+  //       });
+  //       await _audioPlayer.setFilePath(widget.recording.filePath);
+  //     }
+  //   } catch (e) {
+  //     print("オーディオ読み込みエラー: $e");
+  //   }
+  // }
+
   Future<void> _initAudioPlayer() async {
     try {
-      if (await File(widget.recording.filePath).exists()) {
-        _audioPlayer.positionStream.listen((p) {
-          if (mounted) setState(() => _position = p);
-        });
-        _audioPlayer.durationStream.listen((d) {
-          if (mounted) setState(() => _duration = d ?? Duration.zero);
-        });
-        _audioPlayer.playerStateStream.listen((state) {
-          if (mounted) {
-            setState(() {
-              _isPlaying = state.playing;
-            });
-            if (state.processingState == ProcessingState.completed) {
-              _audioPlayer.seek(Duration.zero);
-              _audioPlayer.pause();
+      final localFile = File(widget.recording.filePath);
+      final bool localExists = await localFile.exists();
+
+      if (localExists) {
+        print("ローカル再生: ${widget.recording.filePath}");
+        _setupAudioListeners();
+        await _audioPlayer.setFilePath(widget.recording.filePath);
+      }
+      // ローカルなし、s3情報アリ
+      else if (widget.recording.s3AudioUrl != null && widget.recording.s3AudioUrl!.isNotEmpty) {
+        print("ローカルファイルが見つかりません。S3から再生します。");
+        // ロード中の画面表示してもOK ↓
+        // SetState(() => _isLoading = true);
+
+        final tokenService = GetIdtokenService();
+        final token = await tokenService.getIdtoken();
+
+        if (token != null) {
+          final downloadService = S3DownloadService();
+          final presignedUrl = await downloadService.getPresignedUrl(
+            widget.recording.s3AudioUrl!,
+            token
+          );
+
+          if (presignedUrl != null) {
+            print("署名付きURL取得成功: $presignedUrl");
+
+            _setupAudioListeners();
+
+            await _audioPlayer.setUrl(presignedUrl);
+          } else {
+            print("署名付きURLの取得に失敗しました");
+            if (mounted) {
+              ScaffoldMessenger.of(context).showSnackBar(
+                const SnackBar(content: Text("音声ファイルのURL取得に失敗しました")),
+              );
             }
           }
-        });
-        await _audioPlayer.setFilePath(widget.recording.filePath);
+        } else {
+          print("トークン取得失敗");
+        }
+      } else {
+        print("再生可能な音声がありません");
       }
     } catch (e) {
       print("オーディオ読み込みエラー: $e");
+      if(mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('再生エラー: $e')),
+        );
+      }
     }
+  }
+
+  void _setupAudioListeners() {
+    _audioPlayer.positionStream.listen((p) {
+      if (mounted) setState(() => _position = p); 
+    });
+    _audioPlayer.durationStream.listen((d) {
+      if (mounted) setState(() => _duration = d ?? Duration.zero);
+    });
+    _audioPlayer.playerStateStream.listen((state) {
+      if (mounted) {
+        setState(() {
+          _isPlaying = state.playing;
+        });
+        if (state.processingState == ProcessingState.completed) {
+          _audioPlayer.seek(Duration.zero);
+          _audioPlayer.pause();
+        }
+      }
+    });
   }
 
   void _togglePlay() {
@@ -307,12 +385,16 @@ Future<void> s3Upload(String title) async {
           
           print("保存完了！ ID: $recordingId");
 
-          if (widget.recording.remoteId == null){
-            await isar.writeTxn(() async {
-            widget.recording.remoteId = recordingId;
+          await isar.writeTxn(() async {
+            if (widget.recording.remoteId == null){
+              widget.recording.remoteId = recordingId;
+            }
+            
+            // s3AudioPath に s3Key (パス) を保存
+            widget.recording.s3AudioUrl = s3Key;
+
             await isar.recordings.put(widget.recording);
           });
-          }
 
           if (!mounted) return;
             ScaffoldMessenger.of(context).showSnackBar(
@@ -514,13 +596,28 @@ Future<void> s3Upload(String title) async {
             children: [
               Padding(
                 padding: const EdgeInsets.only(left: 8.0, bottom: 4.0),
-                child: Text(
-                  segment.speaker,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 12,
-                    color:Colors.grey,
-                  ),
+                child: Row(
+                  children: [
+                    Text(
+                      segment.speaker,
+                      style: const TextStyle(
+                      fontWeight: FontWeight.bold,
+                      fontSize: 12,
+                      color:Colors.grey,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+
+
+                    // ======= 再生同期ボタン ==========
+                    const Icon(
+                      Icons.play_arrow_outlined,
+                      size: 20,
+                      color: Colors.blue,
+                    ),
+                    // ================================
+                  ],
+                  
                 ),
               ),
               Container(
