@@ -2,12 +2,14 @@ import 'dart:io';
 // ★追加: ランダムID生成用
 import 'dart:math'; 
 import 'package:flutter/material.dart';
+import 'package:internet_connection_checker_plus/internet_connection_checker_plus.dart';
 import 'package:isar/isar.dart';
 import 'package:intl/intl.dart';
 import 'package:amplify_flutter/amplify_flutter.dart';
 import 'package:file_picker/file_picker.dart'; 
 import 'package:path_provider/path_provider.dart'; 
 import 'package:image_picker/image_picker.dart'; 
+import 'package:voice_app/utils/network_utils.dart';
 
 import '../models/recording.dart';
 import 'recording_screen.dart';
@@ -36,7 +38,7 @@ class _HomeScreenState extends State<HomeScreen> {
     if (isar != null) {
       _repository = RecordingRepository(isar);
       _initRecordingStream();
-      _syncMetadataList();
+      _quietSyncOnStartup();
     }
   }
 
@@ -49,6 +51,20 @@ class _HomeScreenState extends State<HomeScreen> {
             .sortByCreatedAtDesc()
             .watch(fireImmediately: true);
       });
+    }
+  }
+
+  Future<void> _quietSyncOnStartup() async {
+    // ネット接続確認
+    final bool isConnected = await InternetConnection().hasInternetAccess;
+    if (!isConnected) {
+      print("ホーム画面: オフラインのため起動時の同期をスキップしました");
+      return;
+    }
+    
+    // 画面が生きていれば同期実行
+    if (mounted) {
+      await _syncMetadataList();
     }
   }
 
@@ -217,6 +233,30 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<String?> getPreferredUsername() async {
+  try {
+    final attributes = await Amplify.Auth.fetchUserAttributes();
+
+    for (final element in attributes) {
+      // CognitoUserAttributeKey.preferredUsername を使用して比較
+      if (element.userAttributeKey == CognitoUserAttributeKey.preferredUsername) {
+        return element.value;
+      }
+    }
+    
+    // 見つからなかった場合
+    print('preferred_username is not set for this user.');
+    return null;
+
+  } on AuthException catch (e) {
+    // ログインしていない、またはセッション切れの場合などのエラー処理
+    print('Error fetching user attributes: ${e.message}');
+    return null;
+  } catch (e) {
+    print('Unknown error: $e');
+    return null;
+  }
+}
   // --- 共通機能 ---
 
   Future<void> _importFile() async {
@@ -227,35 +267,44 @@ class _HomeScreenState extends State<HomeScreen> {
       );
 
       if (result != null && result.files.single.path != null) {
-        final originalPath = result.files.single.path!;
-        final fileName = result.files.single.name;
+        await _processImport(result.files.single.path!, result.files.single.name);
+      }
+    } catch (e) {
+      print('インポートエラー');
+    }
+  }
 
+  Future<void> _processImport(String originalPath, String fileName) async {
+    final ownerName = await getPreferredUsername();
+      try{
+        if (ownerName == null) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('ユーザー情報が取得できません。再ログインしてください。')),
+          );
+
+          Navigator.of(context).pushReplacement(
+            MaterialPageRoute(builder: (context) => const LoginScreen()),
+          );
+          return;
+        }
+
+        // アプリ内の安全な場所にコピーする
         final appDir = await getApplicationDocumentsDirectory();
         final newPath = '${appDir.path}/imported_$fileName';
         await File(originalPath).copy(newPath);
 
-        // ユーザーIDを取得して ownerName に入れる
-        String currentUserId = 'unknown_user';
-        try {
-            final user = await Amplify.Auth.getCurrentUser();
-            currentUserId = user.userId;
-        } catch(e) {
-            print("ユーザーID取得失敗(インポート): $e");
-        }
-
+        // データベースに登録
         final isar = Isar.getInstance();
         if (isar != null) {
           final newRecording = Recording()
             ..title = "インポート: $fileName" 
             ..filePath = newPath
-            ..durationSeconds = 0 
+            ..ownerName = ownerName
+            ..durationSeconds = 0
             ..createdAt = DateTime.now()
             ..updatedAt = DateTime.now()
-            ..lastSyncTime = DateTime.fromMillisecondsSinceEpoch(0)
-            ..ownerName = currentUserId
-            // ★修正: nullだと重複扱いされるため、一時的なIDを生成
-            ..remoteId = _generateUniqueId()
-            ..status = 'pending'; 
+            ..status = "processing";
 
           await isar.writeTxn(() async {
             await isar.recordings.put(newRecording);
@@ -266,7 +315,6 @@ class _HomeScreenState extends State<HomeScreen> {
             const SnackBar(content: Text('ファイルをインポートしました')),
           );
         }
-      }
     } catch (e) {
       print('インポートエラー: $e');
       ScaffoldMessenger.of(context).showSnackBar(
@@ -394,7 +442,14 @@ class _HomeScreenState extends State<HomeScreen> {
                   )
                 : const Icon(Icons.sync),
             tooltip: 'リストを更新',
-            onPressed: _isSyncing ? null : _syncMetadataList,
+            onPressed: _isSyncing 
+            ? null 
+            : () {
+              runWithNetworkCheck(
+                context: context, 
+                action: _syncMetadataList
+              );
+              },
           ),
           IconButton(
              icon: const Icon(Icons.file_upload),

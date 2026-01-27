@@ -4,7 +4,9 @@ import 'package:isar/isar.dart';
 import 'dart:io';
 
 // Main由来
+import 'package:internet_connection_checker_plus/internet_connection_checker_plus.dart';
 import 'package:voice_app/repositories/recording_repository.dart';
+import 'package:voice_app/utils/network_utils.dart';
 import '../services/gemini_service.dart';
 import '../models/recording.dart';
 import 'share_screen.dart';
@@ -28,10 +30,11 @@ class _ResultScreenState extends State<ResultScreen> {
   late final RecordingRepository _repository;
 
   // Stream & UI State (Main由来)
-  late Stream<Recording?> _recordingStream;
+  Stream<Recording?>? _recordingStream;
   DisplayMode _currentMode = DisplayMode.transcription;
   bool _isProcessing = false;
   bool _isLoading = false;
+  String _displayText = "";
 
   // Audio Player & Image State (HEAD由来)
   final AudioPlayer _audioPlayer = AudioPlayer();
@@ -49,6 +52,8 @@ class _ResultScreenState extends State<ResultScreen> {
     'フランス語': 'French',
     'ドイツ語': 'German',
   };
+  bool _isUploading = false;
+  String _uploadStatusText = 'アップロード';
 
   @override
   void initState() {
@@ -129,97 +134,260 @@ class _ResultScreenState extends State<ResultScreen> {
     final recording = await isar.recordings.get(widget.recording.id);
     if (recording == null || recording.remoteId == null) return;
 
-    print("バックグラウンド同期を開始...");
-    try {
-      final tokenService = GetIdtokenService();
-      final token = await tokenService.getIdtoken();
-      if (token != null) {
-        await _repository.syncTranscriptionAndSummary(recording, token);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('最新データを取得しました'), duration: Duration(seconds: 1)),
-          );
-        }
-      }
-    } catch (e) {
-      print("バックグラウンド同期失敗 (無視可): $e");
+    // データが不完全、または古い場合は同期を実行
+    // 例: 文字起こしがない、または最終同期から時間が経っているなど
+    // とりあえず毎回最新を確認する
+
+    final bool isConnected = await InternetConnection().hasInternetAccess;
+    if (!isConnected) {
+      print("オフラインのため自動同期をスキップします。ローカルデータを表示します。");
+      return;
     }
+
+    if (!mounted) return;
+
+    await runWithNetworkCheck(context: context, action: () async {
+      print("バックグラウンド同期を開始...");
+      try {
+        final tokenService = GetIdtokenService();
+        final token = await tokenService.getIdtoken();
+        if (token != null) {
+          await _repository.syncTranscriptionAndSummary(recording, token);
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('最新データを取得しました'), duration: Duration(seconds: 1)),
+            );
+          }
+        }
+      } catch (e) {
+        print("バックグラウンド同期失敗 (無視可): $e");
+      }
+    });
   }
 
   Future<void> _manualSync() async {
-    setState(() => _isProcessing = true);
-    final isar = Isar.getInstance();
-    if (isar != null) {
-      final recording = await isar.recordings.get(widget.recording.id);
-      if (recording != null) {
+    runWithNetworkCheck(
+      context: context, 
+      action: () async {
+        setState(() => _isProcessing = true);
         try {
+          final recording = await isar.recordings.get(widget.recording.id);
+          if (recording != null) {
             final tokenService = GetIdtokenService();
             final token = await tokenService.getIdtoken();
             if (token == null) throw Exception("ログインが必要です");
-            
+
             await _repository.syncTranscriptionAndSummary(recording, token);
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('同期完了')));
             }
+          }
         } catch (e) {
           if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('同期エラー: $e')));
-            }
+            ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('同期エラー: $e')));
+          }
+        } finally {
+          if (mounted) {
+            setState(() => _isLoading = false);
+          }
         }
       }
-    }
-    setState(() => _isProcessing = false);
+    );
   }
 
-  // --- S3 Upload Logic (Main由来 - より堅牢) ---
-  Future<void> s3Upload(String title) async {
-    final file = File(widget.recording.filePath);
-    try {
-      final tokenService = GetIdtokenService();
-      final token = await tokenService.getIdtoken();
 
-      if (token == null) {
-        print("トークンが取得できませんでした（未ログイン）");
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('ログインが必要です')),
-        );
-        return;
+  // void _loadLocalData() {
+  //   setState(() {
+  //     final summary = widget.recording.summary;
+  //     final transcription = widget.recording.transcription;
+  //     if (summary != null && summary.isNotEmpty) {
+  //       // 要約がある場合
+  //       _summaryText = summary;
+  //     } else {
+  //       _summaryText = "まだ要約がありません";
+  //       // TODO : 要約同期処理
+  //     }
+  //     if (transcription != null && transcription.isNotEmpty){
+  //       _transcriptionText = transcription;
+  //     } else {
+  //       _transcriptionText = "まだ文字起こしがありません";
+  //       // TODO : 文字起こし同期処理
+  //     }
+  //     _displayText = _transcriptionText;
+  //   });
+  // }
+
+  // // クラウドからデータ取得
+  // Future<void> _syncFromCloud({bool silent = false}) async {
+  //   if (widget.recording.remoteId == null) return;
+
+  //   if (!silent) setState(() => _isLoading = true);
+
+  //   try {
+  //     final tokenService = GetIdtokenService();
+  //     final token = await tokenService.getIdtoken();
+
+  //     if (token == null) {
+  //       if (!silent) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('ログインが必要です')));
+  //       return;
+  //     }
+
+  //     // リポジトリ経由で同期実行
+  //     // リポジトリ内でIsarへの保存(put)が行われる
+  //     await _repository.syncTranscriptionAndSummary(widget.recording, token);
+
+  //     // 成功したら画面のテキストを更新
+  //     _loadLocalData();
+
+  //     if (!silent) {
+  //       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('クラウドと同期しました')));
+  //     }
+  //   } catch (e) {
+  //     print("同期エラー: $e");
+  //     // silent実行時はユーザーにエラーを見せない（または控えめに表示）
+  //     if (!silent) {
+  //       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('同期失敗: まだ処理中かもしれません')));
+  //     }
+  //   } finally {
+  //     if (!silent) setState(() => _isLoading = false);
+  //   }
+  // }
+
+  // Future<void> _runGeminiTask(Function task) async {
+  //   setState(() => _isLoading = true);
+  //   final result = await task();
+  //   setState(() {
+  //     _transcriptionText = result;
+  //     _isLoading = false;
+  //   });
+  // }
+
+Future<void> s3Upload(String title) async {
+  // ファイルパスの取得（TODO: 念のため空チェックいれる）
+  final file = File(widget.recording.filePath);
+
+  // トークンの取得処理
+  try {
+    final tokenService = GetIdtokenService();
+    final token = await tokenService.getIdtoken();
+
+          // トークンがない場合（未ログインなど）はここで終了
+          if (token == null) {
+            print("トークンが取得できませんでした（未ログイン）");
+            
+            if (!mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('ログインが必要です')),
+            );
+            return;
+          }
+
+          print("トークン取得成功: ${token.substring(0, 10)}...");
+
+          // アップロード処理
+          final uploadService = S3UploadService();
+
+          String? existingId = widget.recording.remoteId;
+          
+          // アップロード実行
+          final result = await uploadService.uploadAudioFile(
+            file, 
+            title,
+            idToken: token,
+            recordingId: existingId,
+          );
+
+          // 成功時の処理
+          final recordingId = result['recording_id'];
+          final s3Key = result['s3_key'];
+          
+          print("保存完了！ ID: $recordingId");
+
+          if (widget.recording.remoteId == null){
+            await isar.writeTxn(() async {
+            widget.recording.remoteId = recordingId;
+            await isar.recordings.put(widget.recording);
+          });
+          }
+
+          if (!mounted) return;
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('アップロード完了 (ID: $recordingId)')),
+            );
+
+          print("アップロード完了。AI処理待ち開始");
+
+          await _pollForUpdates(recordingId);
+
+        } catch (e) {
+          // エラーハンドリング
+          // print("アップロード失敗: $e");
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('エラーが発生しました: $e')),
+          );
+        } finally {
+          if (mounted) {
+            setState(() {
+              // _isLoading = false;
+              _isUploading = false;
+              _uploadStatusText = 'アップロード';
+            });
+          }
+        }
+  }
+
+  Future<void> _pollForUpdates(String recordingId) async {
+    setState(() {
+      _uploadStatusText = '処理中...';
+    });
+
+    const int maxAttempts = 30;
+    const Duration interval = Duration(seconds: 5);
+
+    for (int i = 0; i < maxAttempts; i++){
+      try {
+        print("ポーリング試行: ${i + 1}/$maxAttempts");
+
+        final tokenService = GetIdtokenService();
+        final token = await tokenService.getIdtoken();
+
+        // isarから最新を取得
+        final latestRecording = await isar.recordings.get(widget.recording.id);
+
+        if (token != null && latestRecording != null) {
+          await _repository.syncTranscriptionAndSummary(latestRecording, token);
+
+          // データが入ったかチェック
+          final checkRecording = await isar.recordings.get(widget.recording.id);
+
+          if (checkRecording != null && checkRecording.transcripts.isNotEmpty) {
+            print("文字起こしデータ受信完了");
+            if (!mounted) return;
+
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('文字起こしが完了しました！')),
+            );
+
+            setState(() {
+              _currentMode = DisplayMode.transcription;
+            });
+
+            return;
+          }
+        }
+      } catch (e) {
+        print('ポーリング中のエラー(続行): $e');
       }
-
-      final uploadService = S3UploadService();
-      String? existingId = widget.recording.remoteId;
-      
-      final result = await uploadService.uploadAudioFile(
-        file, 
-        title,
-        idToken: token,
-        recordingId: existingId,
-      );
-
-      final recordingId = result['recording_id'];
-      
-      // Isar更新
-      final isar = Isar.getInstance();
-      if (isar != null && widget.recording.remoteId == null) {
-        await isar.writeTxn(() async {
-          widget.recording.remoteId = recordingId;
-          await isar.recordings.put(widget.recording);
-        });
-      }
-
-      if (!mounted) return;
+      await Future.delayed(interval);
+    }
+    // 回数切れ
+    if (mounted){
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('アップロード完了 (ID: $recordingId)')),
-      );
-
-    } catch (e) {
-      print("アップロード失敗: $e");
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('エラーが発生しました: $e')),
+        const SnackBar(content: Text('処理に時間がかかっています。後ほど「最新情報を確認」ボタンを押してください。')),
       );
     }
+
   }
 
   // --- Gemini / Translation Logic (HEAD & Main統合) ---
@@ -285,21 +453,50 @@ class _ResultScreenState extends State<ResultScreen> {
   // --- View Builders (Main由来) ---
   Widget _buildTranscriptionList(Recording recording) {
     final segments = recording.transcripts.toList();
-
-    // セグメントがない場合は全文テキストを表示 (HEADの互換性)
+    segments.sort((a, b) => a.startTimeMs.compareTo(b.startTimeMs));
     if (segments.isEmpty) {
-      return SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Text(
-          (recording.transcription != null && recording.transcription!.isNotEmpty)
-            ? recording.transcription!
-            : "文字起こしデータがありません",
-          style: const TextStyle(fontSize: 16, height: 1.5),
+      if (recording.remoteId != null) {
+        return Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const CircularProgressIndicator(),
+              const SizedBox(height: 20),
+              const Text(
+                "クラウドで処理中、または同期中です...",
+                style: TextStyle(color: Colors.grey),
+              ),
+              const SizedBox(height: 20),
+              ElevatedButton.icon(
+                onPressed: _isLoading ? null : _manualSync,
+                icon: const Icon(Icons.refresh),
+                label: const Text("最新情報を確認"),
+              ),
+            ],
+          ),
+        );
+      }
+
+      if (recording.transcription != null && recording.transcription!.isNotEmpty){
+        return SingleChildScrollView(
+          padding: const EdgeInsets.all(16),
+          child: Text(recording.transcription!),
+        );
+      }
+
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.cloud_off, size:48, color:Colors.grey),
+            const SizedBox(height: 16),
+            const Text("文字起こしデータがありません"),
+            const SizedBox(height: 8),
+            const Text("アップロードしてください", style:TextStyle(fontSize: 12, color:Colors.grey)),
+          ],
         ),
       );
     }
-
-    segments.sort((a, b) => a.startTimeMs.compareTo(b.startTimeMs));
 
     return ListView.builder(
       itemCount: segments.length,
@@ -384,33 +581,75 @@ class _ResultScreenState extends State<ResultScreen> {
           return const Scaffold(body: Center(child: Text('データが見つかりません')));
         }
 
-        final String shareContent = "【要約】\n${recording.summary ?? 'なし'}\n\n【全文】\n${recording.transcription ?? 'なし'}";
+        // // 表示するテキストの決定
+        // String displayText;
+        // if (_currentMode == DisplayMode.summary){
+        //   displayText = (recording.summary != null && recording.summary!.isNotEmpty) 
+        //     ? recording.summary!
+        //     : "要約はまだありません (同期中または生成待ち)";
+        // }else {
+        //   displayText = (recording.transcription != null && recording.transcription!.isNotEmpty)
+        //       ? recording.transcription!
+        //       : "文字起こしはまだありません (同期中または生成待ち)";
+        // }
+        final String currentSummary = recording.summary ?? "なし";
+        final String currentTrans = recording.transcripts.map((e) => "${e.speaker}: ${e.text}").join("\n");
+        final String shareContent = "【要約】\n$currentSummary\n\n【全文】\n$currentTrans";
 
+        _displayText = _currentMode == DisplayMode.summary ? currentSummary : currentTrans;
         return Scaffold(
           appBar: AppBar(
-            title: Text(recording.title),
-            actions: [
-              if (recording.remoteId != null)
-                IconButton(
-                  icon: const Icon(Icons.sync),
-                  tooltip: 'クラウドから結果を取得',
-                  onPressed: _isProcessing ? null : () => _manualSync(),
+          // タイトルを受け取ったデータの日付などにする
+          title: Row(
+            children: [
+              Tooltip(
+                message: recording.remoteId != null
+                  ? 'クラウドに保存済み'
+                  : '未アップロード(ローカルのみ)',
+                child: Icon(
+                  recording.remoteId != null
+                    ? Icons.cloud_done
+                    : Icons.cloud_off,
+                  color:recording.remoteId != null
+                    ? Colors.green
+                    : Colors.grey,
+                  size: 20,
                 ),
-              IconButton(
-                icon: const Icon(Icons.share),
-                onPressed: () {
-                  Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (context) => ShareScreen(textContent: shareContent),
-                    ),
-                  );
-                },
+              ),
+              const SizedBox(width: 8),
+
+              // タイトル
+              Expanded(
+                child: Text(
+                  recording.title,
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
             ],
           ),
-          body: Column(
-            children: [
+          actions: [
+          // クラウドと同期
+          if (recording.remoteId != null)
+            IconButton(
+              icon: const Icon(Icons.sync),
+              tooltip: 'クラウドから結果を取得',
+              onPressed: _isProcessing ? null : () => _manualSync(),
+            ),
+            IconButton(
+              icon: const Icon(Icons.share),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => ShareScreen(textContent: shareContent),
+                  ),
+                );
+              },
+          ),
+        ],
+      ),
+      body: Column(
+        children: [
               // 1. プレイヤー / 画像表示エリア (HEADのデザインを採用)
               Container(
                 width: double.infinity,
@@ -459,48 +698,59 @@ class _ResultScreenState extends State<ResultScreen> {
                             ),
                           ),
                         ],
-                      ),
+                    ),
               ),
 
-              // 2. 操作ボタンエリア (MainとHEADを統合)
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                child: Row(
-                  children: [
-                    // 文字起こしモード
-                    ElevatedButton.icon(
-                      onPressed: () => setState(() => _currentMode = DisplayMode.transcription),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _currentMode == DisplayMode.transcription ? Colors.blue[100] : null,
-                      ),
-                      icon: const Icon(Icons.description),
-                      label: const Text('文字起こし'),
-                    ),
-                    const SizedBox(width: 10),
-                    
-                    // 要約モード
-                    ElevatedButton.icon(
-                      onPressed: () => setState(() => _currentMode = DisplayMode.summary),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _currentMode == DisplayMode.summary ? Colors.blue[100] : null,
-                      ),
-                      icon: const Icon(Icons.summarize),
-                      label: const Text('要約'),
-                    ),
-                    const SizedBox(width: 10),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              child: Row(
+                children: [
+                  ElevatedButton.icon(
+                    onPressed: () => setState(() => _currentMode = DisplayMode.transcription),
+                    style: ElevatedButton.styleFrom(
+                          backgroundColor: _currentMode == DisplayMode.transcription ? Colors.blue[100] : null,
+                        ),
 
-                    // クラウドアップロード
-                    ElevatedButton.icon(
-                      onPressed: _isLoading ? null : () => s3Upload(recording.title),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.orangeAccent,
-                        foregroundColor: Colors.white,
-                      ),
-                      icon: const Icon(Icons.cloud_upload),
-                      label: const Text('保存'),
+                    icon: const Icon(Icons.description),
+                    label: const Text('文字起こし'),
+                  ),
+                  const SizedBox(width: 10),
+                  
+                  ElevatedButton.icon(
+                    onPressed: () => setState(() => _currentMode = DisplayMode.summary),
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: _currentMode == DisplayMode.summary ? Colors.blue[100] : null,
+                        ),
+
+                    icon: const Icon(Icons.summarize),
+                    label: const Text('要約'),
+                  ),
+                  const SizedBox(width: 10),
+
+                  // ---------------------------
+                  ElevatedButton.icon(
+                    onPressed: (_isLoading || _isUploading) ? null : () => s3Upload(recording.title),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.orangeAccent, // 目立つように色を変更
+                      foregroundColor: Colors.white,
+                      disabledBackgroundColor: Colors.orangeAccent.withOpacity(0.6),
+                      disabledForegroundColor: Colors.white,
                     ),
-                    const SizedBox(width: 10),
+                    icon:  _isUploading
+                      ? const SizedBox(
+                        width: 20, 
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                      : const Icon(Icons.cloud_upload),
+                    label: Text(_uploadStatusText),
+                  ),
+                  const SizedBox(width: 10),
+                  // ---------------------------
 
                     // 翻訳 (HEADの機能)
                     ElevatedButton.icon(
