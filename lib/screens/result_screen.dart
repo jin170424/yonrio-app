@@ -31,6 +31,8 @@ class _ResultScreenState extends State<ResultScreen> {
   final GeminiService _geminiService = GeminiService();
   late final RecordingRepository _repository;
 
+  // 再生スクロールのためのコントローラー
+  final ScrollController _scrollController = ScrollController();
   // Stream & UI State (Main由来)
   Stream<Recording?>? _recordingStream;
   DisplayMode _currentMode = DisplayMode.transcription;
@@ -172,8 +174,24 @@ class _ResultScreenState extends State<ResultScreen> {
 
   void _setupAudioListeners() {
     _audioPlayer.positionStream.listen((p) {
-      if (mounted) setState(() => _position = p); 
+      if (mounted) setState(() => _position = p);
+        // --- ここから追加したスクロール命令 ---
+        final ms = p.inMilliseconds;
+        final segments = widget.recording.transcripts.toList();
+        segments.sort((a, b) => a.startTimeMs.compareTo(b.startTimeMs));
+
+        int activeIndex = segments.lastIndexWhere((s) => ms >= s.startTimeMs);
+
+        if (activeIndex != -1 && _scrollController.hasClients) {
+          _scrollController.animateTo(
+            activeIndex * 120.0, 
+            duration: const Duration(milliseconds: 300),
+            curve: Curves.easeInOut,
+          );
+        }
+        // --- ここまで ---
     });
+
     _audioPlayer.durationStream.listen((d) {
       if (mounted) setState(() => _duration = d ?? Duration.zero);
     });
@@ -189,7 +207,16 @@ class _ResultScreenState extends State<ResultScreen> {
       }
     });
   }
-
+//＝＝＝＝＝＝ いったん追加しました＝＝＝＝＝＝＝＝＝
+  Future<void> _playFromTimestamp(int startTimeMs) async {
+    try {
+      await _audioPlayer.seek(Duration(milliseconds: startTimeMs));
+      _audioPlayer.play();
+    } catch (e) {
+      print("シーク再生エラー: $e");
+    }
+  }
+// ＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝＝
   void _togglePlay() {
     if (_isPlaying) {
       _audioPlayer.pause();
@@ -585,6 +612,7 @@ Future<void> s3Upload(String title) async {
     }
 
     return ListView.builder(
+      controller: _scrollController,//コントローラ追加
       itemCount: segments.length,
       padding: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
       itemBuilder: (context, index) {
@@ -610,10 +638,16 @@ Future<void> s3Upload(String title) async {
 
 
                     // ======= 再生同期ボタン ==========
-                    const Icon(
-                      Icons.play_arrow_outlined,
-                      size: 20,
-                      color: Colors.blue,
+                    IconButton(
+                      icon: const Icon(
+                        Icons.play_arrow_outlined,
+                        size: 20,
+                        color: Colors.blue,
+                      ),
+                      // ＝＝＝トップのIconButtonと下部の追加＝＝＝
+                      constraints: const BoxConstraints(),
+                      padding: EdgeInsets.zero,
+                      onPressed: () => _playFromTimestamp(segment.startTimeMs),
                     ),
                     // ================================
                   ],
