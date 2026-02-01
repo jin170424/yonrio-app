@@ -13,6 +13,7 @@ import 'package:voice_app/models/transcript_segment.dart';
 import 'package:voice_app/screens/home_screen.dart'; 
 import 'package:voice_app/screens/login_screen.dart';
 import 'package:voice_app/models/recording.dart'; // DBの設計図
+import 'package:voice_app/services/user_service.dart';
 
 //amplify config
 import 'amplifyconfiguration.dart';
@@ -101,6 +102,7 @@ class _MyAppState extends State<MyApp> {
     try {
       final user = await Amplify.Auth.getCurrentUser();
       safePrint('ログイン済みユーザー: ${user.username}');
+      UserService().syncUserAttributes();
       setState(() {
         _isLoggedIn = true; // ログイン済み
         _isLoading = false; // チェック完了

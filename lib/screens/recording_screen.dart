@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 // ★追加: ランダムID生成用
 import 'dart:math';
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:record/record.dart'; 
 import 'package:path_provider/path_provider.dart';
@@ -9,6 +10,9 @@ import 'package:permission_handler/permission_handler.dart';
 import 'package:isar/isar.dart';
 import 'package:intl/intl.dart';
 import 'package:amplify_flutter/amplify_flutter.dart';
+import 'package:voice_app/main.dart';
+import 'package:voice_app/repositories/recording_repository.dart';
+import 'package:voice_app/services/user_service.dart';
 
 import '../models/recording.dart'; 
 
@@ -81,7 +85,14 @@ class _RecordingScreenState extends State<RecordingScreen> {
     });
 
     if (path != null) {
-      await _saveToIsar(path, _recordDuration);
+      final ownerName = await UserService().getPreferredUsername();
+      // await _saveToIsar(path, _recordDuration);
+      final dio = Dio();
+      await RecordingRepository(isar: isar, dio: dio).saveRecording(
+        filePath: path,
+        duration: _recordDuration, 
+        ownerName: ownerName ?? 'unknown_user',
+        );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('録音を保存しました')),
@@ -90,35 +101,32 @@ class _RecordingScreenState extends State<RecordingScreen> {
     }
   }
 
-  Future<void> _saveToIsar(String filePath, int duration) async {
-    final isar = Isar.getInstance();
-    if (isar != null) {
+  // Future<void> _saveToIsar(String filePath, int duration) async {
+  //   final isar = Isar.getInstance();
+  //   if (isar != null) {
 
-      String currentUserId = 'unknown_user';
-      try {
-        final user = await Amplify.Auth.getCurrentUser();
-        currentUserId = user.userId;
-      } catch (e) {
-        print("Auth error (offline or not logged in): $e");
-      }
+  //     String currentUserId = 'unknown_user';
+  //     try {
+  //       final user = await Amplify.Auth.getCurrentUser();
+  //       currentUserId = user.userId;
+  //     } catch (e) {
+  //       print("Auth error (offline or not logged in): $e");
+  //     }
 
-      final newRecording = Recording()
-        ..title = DateFormat('yyyy/MM/dd HH:mmの録音').format(DateTime.now())
-        ..filePath = filePath
-        ..durationSeconds = duration
-        ..createdAt = DateTime.now()
-        ..updatedAt = DateTime.now()
-        ..lastSyncTime = DateTime.fromMillisecondsSinceEpoch(0)
-        ..ownerName = currentUserId
-        // ★修正: nullだと重複扱いされるため、一時的なIDを生成
-        ..remoteId = _generateUniqueId()
-        ..status = 'pending';
+  //     final newRecording = Recording()
+  //       ..title = DateFormat('yyyy/MM/dd HH:mmの録音').format(DateTime.now())
+  //       ..filePath = filePath
+  //       ..durationSeconds = duration
+  //       ..createdAt = DateTime.now()
+  //       ..updatedAt = DateTime.now()
+  //       ..ownerName = currentUserId
+  //       ..status = 'processing';
 
-      await isar.writeTxn(() async {
-        await isar.recordings.put(newRecording);
-      });
-    }
-  }
+  //     await isar.writeTxn(() async {
+  //       await isar.recordings.put(newRecording);
+  //     });
+  //   }
+  // }
 
   void _startTimer() {
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {

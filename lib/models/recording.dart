@@ -57,6 +57,10 @@ class Recording {
   DateTime? lastSyncTime;
 
   List<SharedUser>? sharedWith;
+
+  bool needsCloudUpdate = false;
+
+  bool needsCloudDelete = false;
   
   final transcripts = IsarLinks<TranscriptSegment>();
 }

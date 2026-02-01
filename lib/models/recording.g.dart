@@ -37,59 +37,69 @@ const RecordingSchema = CollectionSchema(
       name: r'lastSyncTime',
       type: IsarType.dateTime,
     ),
-    r'ownerName': PropertySchema(
+    r'needsCloudDelete': PropertySchema(
       id: 4,
+      name: r'needsCloudDelete',
+      type: IsarType.bool,
+    ),
+    r'needsCloudUpdate': PropertySchema(
+      id: 5,
+      name: r'needsCloudUpdate',
+      type: IsarType.bool,
+    ),
+    r'ownerName': PropertySchema(
+      id: 6,
       name: r'ownerName',
       type: IsarType.string,
     ),
     r'remoteId': PropertySchema(
-      id: 5,
+      id: 7,
       name: r'remoteId',
       type: IsarType.string,
     ),
     r's3AudioUrl': PropertySchema(
-      id: 6,
+      id: 8,
       name: r's3AudioUrl',
       type: IsarType.string,
     ),
     r's3TranscriptJsonUrl': PropertySchema(
-      id: 7,
+      id: 9,
       name: r's3TranscriptJsonUrl',
       type: IsarType.string,
     ),
     r'sharedWith': PropertySchema(
-      id: 8,
+      id: 10,
       name: r'sharedWith',
       type: IsarType.objectList,
       target: r'SharedUser',
     ),
     r'sourceOriginalId': PropertySchema(
-      id: 9,
+      id: 11,
       name: r'sourceOriginalId',
       type: IsarType.string,
     ),
     r'status': PropertySchema(
-      id: 10,
+      id: 12,
       name: r'status',
       type: IsarType.string,
     ),
     r'summary': PropertySchema(
-      id: 11,
+      id: 13,
       name: r'summary',
       type: IsarType.string,
     ),
     r'title': PropertySchema(
-      id: 12,
+      id: 14,
       name: r'title',
       type: IsarType.string,
     ),
     r'transcription': PropertySchema(
-      id: 13,
+      id: 15,
       name: r'transcription',
       type: IsarType.string,
     ),
     r'updatedAt': PropertySchema(
-      id: 14,
+      id: 16,
       name: r'updatedAt',
       type: IsarType.dateTime,
     )
@@ -259,22 +269,24 @@ void _recordingSerialize(
   writer.writeLong(offsets[1], object.durationSeconds);
   writer.writeString(offsets[2], object.filePath);
   writer.writeDateTime(offsets[3], object.lastSyncTime);
-  writer.writeString(offsets[4], object.ownerName);
-  writer.writeString(offsets[5], object.remoteId);
-  writer.writeString(offsets[6], object.s3AudioUrl);
-  writer.writeString(offsets[7], object.s3TranscriptJsonUrl);
+  writer.writeBool(offsets[4], object.needsCloudDelete);
+  writer.writeBool(offsets[5], object.needsCloudUpdate);
+  writer.writeString(offsets[6], object.ownerName);
+  writer.writeString(offsets[7], object.remoteId);
+  writer.writeString(offsets[8], object.s3AudioUrl);
+  writer.writeString(offsets[9], object.s3TranscriptJsonUrl);
   writer.writeObjectList<SharedUser>(
-    offsets[8],
+    offsets[10],
     allOffsets,
     SharedUserSchema.serialize,
     object.sharedWith,
   );
-  writer.writeString(offsets[9], object.sourceOriginalId);
-  writer.writeString(offsets[10], object.status);
-  writer.writeString(offsets[11], object.summary);
-  writer.writeString(offsets[12], object.title);
-  writer.writeString(offsets[13], object.transcription);
-  writer.writeDateTime(offsets[14], object.updatedAt);
+  writer.writeString(offsets[11], object.sourceOriginalId);
+  writer.writeString(offsets[12], object.status);
+  writer.writeString(offsets[13], object.summary);
+  writer.writeString(offsets[14], object.title);
+  writer.writeString(offsets[15], object.transcription);
+  writer.writeDateTime(offsets[16], object.updatedAt);
 }
 
 Recording _recordingDeserialize(
@@ -289,22 +301,24 @@ Recording _recordingDeserialize(
   object.filePath = reader.readString(offsets[2]);
   object.id = id;
   object.lastSyncTime = reader.readDateTimeOrNull(offsets[3]);
-  object.ownerName = reader.readString(offsets[4]);
-  object.remoteId = reader.readStringOrNull(offsets[5]);
-  object.s3AudioUrl = reader.readStringOrNull(offsets[6]);
-  object.s3TranscriptJsonUrl = reader.readStringOrNull(offsets[7]);
+  object.needsCloudDelete = reader.readBool(offsets[4]);
+  object.needsCloudUpdate = reader.readBool(offsets[5]);
+  object.ownerName = reader.readString(offsets[6]);
+  object.remoteId = reader.readStringOrNull(offsets[7]);
+  object.s3AudioUrl = reader.readStringOrNull(offsets[8]);
+  object.s3TranscriptJsonUrl = reader.readStringOrNull(offsets[9]);
   object.sharedWith = reader.readObjectList<SharedUser>(
-    offsets[8],
+    offsets[10],
     SharedUserSchema.deserialize,
     allOffsets,
     SharedUser(),
   );
-  object.sourceOriginalId = reader.readStringOrNull(offsets[9]);
-  object.status = reader.readStringOrNull(offsets[10]);
-  object.summary = reader.readStringOrNull(offsets[11]);
-  object.title = reader.readString(offsets[12]);
-  object.transcription = reader.readStringOrNull(offsets[13]);
-  object.updatedAt = reader.readDateTime(offsets[14]);
+  object.sourceOriginalId = reader.readStringOrNull(offsets[11]);
+  object.status = reader.readStringOrNull(offsets[12]);
+  object.summary = reader.readStringOrNull(offsets[13]);
+  object.title = reader.readString(offsets[14]);
+  object.transcription = reader.readStringOrNull(offsets[15]);
+  object.updatedAt = reader.readDateTime(offsets[16]);
   return object;
 }
 
@@ -324,31 +338,35 @@ P _recordingDeserializeProp<P>(
     case 3:
       return (reader.readDateTimeOrNull(offset)) as P;
     case 4:
-      return (reader.readString(offset)) as P;
+      return (reader.readBool(offset)) as P;
     case 5:
-      return (reader.readStringOrNull(offset)) as P;
+      return (reader.readBool(offset)) as P;
     case 6:
-      return (reader.readStringOrNull(offset)) as P;
+      return (reader.readString(offset)) as P;
     case 7:
       return (reader.readStringOrNull(offset)) as P;
     case 8:
+      return (reader.readStringOrNull(offset)) as P;
+    case 9:
+      return (reader.readStringOrNull(offset)) as P;
+    case 10:
       return (reader.readObjectList<SharedUser>(
         offset,
         SharedUserSchema.deserialize,
         allOffsets,
         SharedUser(),
       )) as P;
-    case 9:
-      return (reader.readStringOrNull(offset)) as P;
-    case 10:
-      return (reader.readStringOrNull(offset)) as P;
     case 11:
       return (reader.readStringOrNull(offset)) as P;
     case 12:
-      return (reader.readString(offset)) as P;
+      return (reader.readStringOrNull(offset)) as P;
     case 13:
       return (reader.readStringOrNull(offset)) as P;
     case 14:
+      return (reader.readString(offset)) as P;
+    case 15:
+      return (reader.readStringOrNull(offset)) as P;
+    case 16:
       return (reader.readDateTime(offset)) as P;
     default:
       throw IsarError('Unknown property with id $propertyId');
@@ -1438,6 +1456,26 @@ extension RecordingQueryFilter
         includeLower: includeLower,
         upper: upper,
         includeUpper: includeUpper,
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterFilterCondition>
+      needsCloudDeleteEqualTo(bool value) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'needsCloudDelete',
+        value: value,
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterFilterCondition>
+      needsCloudUpdateEqualTo(bool value) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'needsCloudUpdate',
+        value: value,
       ));
     });
   }
@@ -3042,6 +3080,32 @@ extension RecordingQuerySortBy on QueryBuilder<Recording, Recording, QSortBy> {
     });
   }
 
+  QueryBuilder<Recording, Recording, QAfterSortBy> sortByNeedsCloudDelete() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'needsCloudDelete', Sort.asc);
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterSortBy>
+      sortByNeedsCloudDeleteDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'needsCloudDelete', Sort.desc);
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterSortBy> sortByNeedsCloudUpdate() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'needsCloudUpdate', Sort.asc);
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterSortBy>
+      sortByNeedsCloudUpdateDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'needsCloudUpdate', Sort.desc);
+    });
+  }
+
   QueryBuilder<Recording, Recording, QAfterSortBy> sortByOwnerName() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'ownerName', Sort.asc);
@@ -3227,6 +3291,32 @@ extension RecordingQuerySortThenBy
     });
   }
 
+  QueryBuilder<Recording, Recording, QAfterSortBy> thenByNeedsCloudDelete() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'needsCloudDelete', Sort.asc);
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterSortBy>
+      thenByNeedsCloudDeleteDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'needsCloudDelete', Sort.desc);
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterSortBy> thenByNeedsCloudUpdate() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'needsCloudUpdate', Sort.asc);
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterSortBy>
+      thenByNeedsCloudUpdateDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'needsCloudUpdate', Sort.desc);
+    });
+  }
+
   QueryBuilder<Recording, Recording, QAfterSortBy> thenByOwnerName() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'ownerName', Sort.asc);
@@ -3377,6 +3467,18 @@ extension RecordingQueryWhereDistinct
     });
   }
 
+  QueryBuilder<Recording, Recording, QDistinct> distinctByNeedsCloudDelete() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'needsCloudDelete');
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QDistinct> distinctByNeedsCloudUpdate() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'needsCloudUpdate');
+    });
+  }
+
   QueryBuilder<Recording, Recording, QDistinct> distinctByOwnerName(
       {bool caseSensitive = true}) {
     return QueryBuilder.apply(this, (query) {
@@ -3479,6 +3581,18 @@ extension RecordingQueryProperty
   QueryBuilder<Recording, DateTime?, QQueryOperations> lastSyncTimeProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'lastSyncTime');
+    });
+  }
+
+  QueryBuilder<Recording, bool, QQueryOperations> needsCloudDeleteProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'needsCloudDelete');
+    });
+  }
+
+  QueryBuilder<Recording, bool, QQueryOperations> needsCloudUpdateProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'needsCloudUpdate');
     });
   }
 

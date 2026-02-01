@@ -1,6 +1,7 @@
 import 'dart:io'; 
 // ★追加: ランダムID生成用
 import 'dart:math'; 
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:internet_connection_checker_plus/internet_connection_checker_plus.dart';
 import 'package:isar/isar.dart';
@@ -8,7 +9,10 @@ import 'package:intl/intl.dart';
 import 'package:amplify_flutter/amplify_flutter.dart';
 import 'package:file_picker/file_picker.dart'; 
 import 'package:path_provider/path_provider.dart'; 
-import 'package:image_picker/image_picker.dart'; 
+import 'package:image_picker/image_picker.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:voice_app/models/transcript_segment.dart';
+import 'package:voice_app/services/user_service.dart'; 
 import 'package:voice_app/utils/network_utils.dart';
 
 import '../models/recording.dart';
@@ -35,8 +39,9 @@ class _HomeScreenState extends State<HomeScreen> {
     super.initState();
 
     final isar = Isar.getInstance();
+    final dio = Dio();
     if (isar != null) {
-      _repository = RecordingRepository(isar);
+      _repository = RecordingRepository(isar: isar, dio: dio);
       _initRecordingStream();
       _quietSyncOnStartup();
     }
@@ -48,6 +53,8 @@ class _HomeScreenState extends State<HomeScreen> {
       setState(() {
         _recordingStream = isar.recordings
             .where()
+            .filter()
+            .needsCloudDeleteEqualTo(false)
             .sortByCreatedAtDesc()
             .watch(fireImmediately: true);
       });
@@ -64,7 +71,17 @@ class _HomeScreenState extends State<HomeScreen> {
     
     // 画面が生きていれば同期実行
     if (mounted) {
-      await _syncMetadataList();
+      try {
+        final tokenService = GetIdtokenService();
+        final token = await tokenService.getIdtoken();
+        if (token != null) {
+          await _repository.syncPendingDeletions(token);
+          await _repository.syncPendingChanges(token);
+          await _syncMetadataList();
+        }
+      } catch (e) {
+        print("起動時同期エラー: $e");
+      }
     }
   }
 
@@ -104,6 +121,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   if (isar != null) {
                     await isar.writeTxn(() async {
                       recording.title = newTitle;
+                      recording.updatedAt = DateTime.now();
+                      recording.needsCloudUpdate = true;
                       await isar.recordings.put(recording);
                     });
                   }
@@ -141,28 +160,92 @@ class _HomeScreenState extends State<HomeScreen> {
       },
     );
 
-    if (confirmed == true) {
-      // 1. 実ファイルの削除 (スマホの容量を空けるため)
-      try {
-        final file = File(recording.filePath);
-        if (await file.exists()) {
-          await file.delete();
+    if (confirmed != true) return;
+
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false, 
+      builder: (_) => Center(child: CircularProgressIndicator()),
+      );
+    
+    try {
+      // 追加 クラウドからの削除
+      final isar = Isar.getInstance()!;
+      final bool isConnected = await InternetConnection().hasInternetAccess;
+
+      // オフラインの場合
+      if (!isConnected || recording.remoteId == null) {
+        // ローカルファイルの削除
+        final localFilePath = recording.filePath;
+        if (localFilePath.isNotEmpty) {
+          final file = File(localFilePath);
+          if (await file.exists()) {
+            await file.delete();
+          }
         }
-      } catch (e) {
-        print("ファイル削除エラー: $e");
-        // ファイル削除に失敗してもDBからは消すように進める
+
+        await isar.writeTxn(() async {
+          if (recording.remoteId == null) {
+            await recording.transcripts.load();
+            for (var s in recording.transcripts) {
+              await isar.transcriptSegments.delete(s.id);
+            }
+            await isar.recordings.delete(recording.id);
+          } else {
+            // クラウドにデータがある場合フラグ立てる
+            recording.needsCloudDelete = true;
+            recording.filePath = "";
+            await isar.recordings.put(recording);
+          }
+        });
+
+        if (mounted) Navigator.pop(context); // ローディング消す
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text(recording.remoteId == null ? "削除しました" : "オフラインのため削除予約しました"))
+          );
+        }
+        return;
       }
 
-      // 2. データベース(Isar)から削除
-      final isar = Isar.getInstance();
-      if (isar != null) {
-        await isar.writeTxn(() async {
-          await isar.recordings.delete(recording.id);
-        });
+      // オンラインの場合
+      final dio = Dio();
+      final repository = RecordingRepository(isar: isar, dio: dio);
+      final idToken = await GetIdtokenService().getIdtoken();
+
+      if (idToken == null) {
+        // トークンが取れない場合は例外を投げて catch ブロックへ移動させる
+        throw Exception("認証トークンが取得できませんでした。再ログインしてください。");
+      }
+      final localFilePath = recording.filePath;
+      // repository で api削除 -> Isar削除実行
+      await repository.deleteRecording(recording, idToken);
+
+      // 1. 実ファイルの削除 (スマホの容量を空けるため)
+      if (localFilePath.isNotEmpty){
+        final file = File(localFilePath);
+        if (await file.exists()) {
+          await file.delete();
+          print('ローカル音声ファイルを削除しました。');
+        }
+      }
+
+      if (mounted) Navigator.pop(context);
         
-        if (!mounted) return;
+      if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('削除しました')),
+        );
+    } catch (e) {
+      print("削除失敗: $e");
+      if (mounted) Navigator.pop(context);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('削除に失敗しました。通信状況を確認してください'),
+            backgroundColor: Colors.red,
+          ),
         );
       }
     }
@@ -233,30 +316,6 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  Future<String?> getPreferredUsername() async {
-  try {
-    final attributes = await Amplify.Auth.fetchUserAttributes();
-
-    for (final element in attributes) {
-      // CognitoUserAttributeKey.preferredUsername を使用して比較
-      if (element.userAttributeKey == CognitoUserAttributeKey.preferredUsername) {
-        return element.value;
-      }
-    }
-    
-    // 見つからなかった場合
-    print('preferred_username is not set for this user.');
-    return null;
-
-  } on AuthException catch (e) {
-    // ログインしていない、またはセッション切れの場合などのエラー処理
-    print('Error fetching user attributes: ${e.message}');
-    return null;
-  } catch (e) {
-    print('Unknown error: $e');
-    return null;
-  }
-}
   // --- 共通機能 ---
 
   Future<void> _importFile() async {
@@ -275,7 +334,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _processImport(String originalPath, String fileName) async {
-    final ownerName = await getPreferredUsername();
+    final ownerName = await UserService().getPreferredUsername();
       try{
         if (ownerName == null) {
           if (!mounted) return;

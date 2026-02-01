@@ -51,6 +51,11 @@ dependencies:
   # 接続チェック
   internet_connection_checker_plus: ^2.7.2
 
+  # ローカルキャッシュ
+  shared_preferences: ^2.5.3
+
+  dio: ^5.9.0
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
