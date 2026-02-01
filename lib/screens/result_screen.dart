@@ -1,3 +1,4 @@
+import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart'; // HEAD由来
 import 'package:isar/isar.dart';
@@ -5,6 +6,7 @@ import 'dart:io';
 
 // Main由来
 import 'package:internet_connection_checker_plus/internet_connection_checker_plus.dart';
+import 'package:voice_app/models/transcript_segment.dart';
 import 'package:voice_app/repositories/recording_repository.dart';
 import 'package:voice_app/services/s3download_service.dart';
 import 'package:voice_app/utils/network_utils.dart';
@@ -13,7 +15,6 @@ import '../models/recording.dart';
 import 'share_screen.dart';
 import '../services/s3upload_service.dart';
 import '../services/get_idtoken_service.dart';
-import '../services/s3download_service.dart';
 import '../main.dart'; // isarインスタンス取得用
 
 enum DisplayMode { transcription, summary }
@@ -57,12 +58,19 @@ class _ResultScreenState extends State<ResultScreen> {
   bool _isUploading = false;
   String _uploadStatusText = '保存';
 
+  int? _editingIndex;
+  final TextEditingController _editController = TextEditingController();
+
+  bool _isEditingSummary = false;
+  final TextEditingController _summaryController = TextEditingController();
+
   @override
   void initState() {
     super.initState();
     final isar = Isar.getInstance(); // main.dart等で確保されている前提
     if (isar != null) {
-      _repository = RecordingRepository(isar);
+      final dio = Dio();
+      _repository = RecordingRepository(isar: isar, dio: dio);
       // ストリームセットアップ
       _recordingStream = isar.recordings.watchObject(widget.recording.id, fireImmediately: true);
     }
@@ -83,6 +91,8 @@ class _ResultScreenState extends State<ResultScreen> {
   @override
   void dispose() {
     _audioPlayer.dispose();
+    _editController.dispose();
+    _summaryController.dispose();
     super.dispose();
   }
 
@@ -206,6 +216,7 @@ class _ResultScreenState extends State<ResultScreen> {
 
   // --- Sync Logic (Main由来) ---
   Future<void> _autoSyncIfNeeded() async {
+    
     final isar = Isar.getInstance();
     if (isar == null) return;
     
@@ -223,6 +234,12 @@ class _ResultScreenState extends State<ResultScreen> {
     }
 
     if (!mounted) return;
+
+    if (widget.recording.needsCloudUpdate) {
+      print("ローカル変更が未送信のため、アップロードを試みます");
+      _manualSync();
+      return;
+    }
 
     await runWithNetworkCheck(context: context, action: () async {
       print("バックグラウンド同期を開始...");
@@ -255,6 +272,20 @@ class _ResultScreenState extends State<ResultScreen> {
             final token = await tokenService.getIdtoken();
             if (token == null) throw Exception("ログインが必要です");
 
+            // アップロード処理
+            // ローカルに変更がある場合のみ実行
+            if (recording.needsCloudUpdate) {
+              print("ローカルの変更をクラウドへアップロード中...");
+              // クラウド更新
+              await _repository.updateRecording(recording, token, syncTranscripts: true);
+              await isar.writeTxn(() async {
+                recording.needsCloudUpdate = false;
+                await isar.recordings.put(recording);
+              });
+              print("アップロード完了");
+            }
+
+
             await _repository.syncTranscriptionAndSummary(recording, token);
             if (mounted) {
               ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('同期完了')));
@@ -267,6 +298,7 @@ class _ResultScreenState extends State<ResultScreen> {
         } finally {
           if (mounted) {
             setState(() => _isLoading = false);
+            setState(() => _isProcessing = false);
           }
         }
       }
@@ -536,6 +568,140 @@ Future<void> s3Upload(String title) async {
     );
   }
 
+  Future<void> _saveTranscriptSegment(int index, TranscriptSegment segment, Recording recording) async {
+    final newText = _editController.text;
+
+    // 変更がない場合は終了
+    if (newText == segment.text) {
+      setState(() {
+        _editingIndex = null;
+      });
+      return;
+    }
+
+    setState(() => _isProcessing = true);
+
+    final isar = Isar.getInstance();
+    if (isar == null) return;
+
+    // ローカルisarの更新
+    await isar.writeTxn(() async {
+      segment.text = newText;
+      await isar.transcriptSegments.put(segment);
+      // 全文も更新
+      await recording.transcripts.load();
+      final sorted = recording.transcripts.toList()
+        ..sort((a, b) => a.startTimeMs.compareTo(b.startTimeMs));
+      recording.transcription = sorted.map((e) => e.text).join("");
+      recording.needsCloudUpdate = true;
+      await isar.recordings.put(recording);
+    });
+
+    try {
+      final tokenService = GetIdtokenService();
+      final token = await tokenService.getIdtoken();
+      if (token == null) throw Exception('ログインが必要です');
+      
+      if (token != null && await InternetConnection().hasInternetAccess){
+        // クラウド同期
+        await _repository.updateRecording(recording, token, syncTranscripts: true);
+
+        await isar.writeTxn(() async {
+          recording.needsCloudUpdate = false;
+          await isar.recordings.put(recording);
+        });
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('修正を保存しました')),
+          );
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('同期に失敗しました（データは本体に保存済み）')));
+        }
+      }
+    } catch (e) {
+      print("保存エラー: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('保存エラー: $e')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _editingIndex = null;
+          _isProcessing = false;
+        });
+      }
+    }
+  }
+
+  Future<void> _saveSummary(Recording recording) async {
+    final newText = _summaryController.text;
+
+    // 変更なしなら閉じる
+    if(newText == recording.summary) {
+      setState(() {
+        _isEditingSummary = false;
+      });
+      return;
+    }
+
+    setState(() => _isProcessing = true);
+
+    final isar = Isar.getInstance();
+    if (isar == null) return;
+
+    await isar.writeTxn(() async {
+      recording.summary = newText;
+      recording.needsCloudUpdate = true;
+      await isar.recordings.put(recording);
+    });
+
+    try {
+      final tokenService = GetIdtokenService();
+      final token = await tokenService.getIdtoken();
+
+      if (token == null) throw Exception("ログインが必要です");
+
+      if (token != null && await InternetConnection().hasInternetAccess){
+
+      await _repository.updateRecording(recording, token, syncTranscripts: true);
+
+      await isar.writeTxn(() async {
+        recording.needsCloudUpdate = false;
+        await isar.recordings.put(recording);
+      });
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('要約を保存しました')),
+        );
+      }
+    } else {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("オフラインのため、次回起動時にクラウドに同期されます。")));
+      }
+    }
+    } catch (e) {
+      print("同期失敗: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('同期失敗（ローカルには保存済み）')),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isEditingSummary = false;
+          _isProcessing = false;
+        });
+      }
+    }
+  }
+
   // --- View Builders (Main由来) ---
   Widget _buildTranscriptionList(Recording recording) {
     final segments = recording.transcripts.toList();
@@ -589,6 +755,7 @@ Future<void> s3Upload(String title) async {
       padding: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
       itemBuilder: (context, index) {
         final segment = segments[index];
+        final isEditing = _editingIndex == index;
         return Padding(
           padding: const EdgeInsets.symmetric(vertical: 8.0),
           child: Column(
@@ -616,6 +783,25 @@ Future<void> s3Upload(String title) async {
                       color: Colors.blue,
                     ),
                     // ================================
+
+                    const Spacer(),
+
+                    if(!isEditing && !_isProcessing) 
+                      GestureDetector(
+                        onTap: () {
+                          setState(() {
+                            _editingIndex = index;
+                            _editController.text = segment.text; // 現在のテキストをセット
+                          });
+                        },
+                        child : const Row(
+                          children : [
+                            Icon(Icons.edit, size: 18, color: Colors.grey),
+                            SizedBox(width: 4),
+                            Text("編集", style: TextStyle(fontSize: 12, color:Colors.grey)),
+                          ],
+                        ),
+                      ),
                   ],
                   
                 ),
@@ -626,7 +812,10 @@ Future<void> s3Upload(String title) async {
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.grey.shade300),
+                  border: Border.all(
+                    color: isEditing ? Colors.blue : Colors.grey.shade300,
+                    width: isEditing ? 2.0 : 1.0,
+                  ),
                   boxShadow: [
                     BoxShadow(
                       color: Colors.grey.withOpacity(0.1),
@@ -635,7 +824,46 @@ Future<void> s3Upload(String title) async {
                     )
                   ],
                 ),
-                child: Text(
+                child: isEditing
+                  ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      TextField(
+                        controller: _editController,
+                        maxLines: null,
+                        decoration: const InputDecoration(
+                          border: InputBorder.none,
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                        style: const TextStyle(fontSize: 15, height: 1.4),
+                      ),
+                      const SizedBox(height:8),
+                      Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          TextButton(
+                            onPressed: () {
+                              setState(() {
+                                _editingIndex = null;
+                              });
+                            }, 
+                            child: const Text("キャンセル", style: TextStyle(color: Colors.grey)),
+                          ),
+                          const SizedBox(width: 8),
+                          ElevatedButton(
+                            onPressed: () => _saveTranscriptSegment(index, segment, recording),
+                            style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.blue,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(horizontal: 16, vertical:8),
+                            ),
+                            child: const Text("保存"),
+                          ),
+                        ],
+                      )
+                    ],
+                  )
+                : Text(
                   segment.text,
                   style: const TextStyle(fontSize: 15, height: 1.4),
                 ),
@@ -648,21 +876,92 @@ Future<void> s3Upload(String title) async {
   }
 
   Widget _buildSummaryView(Recording recording) {
-    final text = (recording.summary != null && recording.summary!.isNotEmpty) 
-            ? recording.summary!
-            : "要約はまだありません (同期中または生成待ち)";
+    final hasSummary = recording.summary != null && recording.summary!.isNotEmpty;
+    final displayText = hasSummary ? recording.summary! : "要約はまだありません（同期中または生成待ち）";
             
     return SingleChildScrollView(
-      child: Container(
-        width: double.infinity,
-        margin: const EdgeInsets.all(16),
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-           color: Colors.orange.withOpacity(0.05),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: Colors.orange.withOpacity(0.2)),
-        ),
-        child: Text(text, style: const TextStyle(fontSize: 16)),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          // 編集ボタン（表示モードかつデータがある場合）
+          if (!_isEditingSummary && !_isProcessing)
+            Padding(
+              padding: const EdgeInsets.only(top: 8, right: 16),
+              child: TextButton.icon(
+                onPressed: () {
+                  setState(() {
+                    _isEditingSummary = true;
+                    _summaryController.text = recording.summary ?? "";
+                  });
+                },
+                icon: const Icon(Icons.edit, size: 18),
+                label: const Text("要約を編集"),
+              ),
+            ),
+            Container(
+              width: double.infinity,
+              margin: const EdgeInsets.only(left: 16, right: 16, bottom:16, top:8),
+              padding: const EdgeInsets.all(16),
+              decoration: BoxDecoration(
+                color: _isEditingSummary ? Colors.white : Colors.orange.withOpacity(0.05),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: _isEditingSummary ? Colors.blue : Colors.orange.withOpacity(0.2),
+                    width: _isEditingSummary ? 2.0 : 1.0,
+                  ),
+                  boxShadow: _isEditingSummary
+                    ? [
+                      BoxShadow(
+                        color: Colors.grey.withOpacity(0.1),
+                        blurRadius: 4,
+                        offset: const Offset(0, 2),
+                      )
+                    ]
+                  : null,
+              ),
+              child: _isEditingSummary
+                ? Column(
+                  children: [
+                    TextField(
+                      controller: _summaryController,
+                      maxLines: null,
+                      decoration: const InputDecoration(
+                        border: InputBorder.none,
+                        hintText: "要約を入力してください",
+                      ),
+                      style: const TextStyle(fontSize: 16, height:1.5),
+                    ),
+                    const SizedBox(height:16),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.end,
+                      children: [
+                        TextButton(
+                          onPressed: () {
+                            setState(() {
+                              _isEditingSummary = false;
+                            });
+                          }, 
+                          child: const Text("キャンセル", style: TextStyle(color: Colors.grey)),
+                        ),
+                        const SizedBox(width: 8),
+                        ElevatedButton(
+                          onPressed: () => _saveSummary(recording),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.blue,
+                            foregroundColor: Colors.white,
+                          ),
+                          child: const Text("保存"),
+                        )
+                      ],
+                    )
+                  ],
+                )
+              : Text(
+                displayText,
+                style: const TextStyle(fontSize: 16, height: 1.5),
+              ),
+            ),
+        ],
       ),
     );
   }

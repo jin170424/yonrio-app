@@ -22,6 +22,7 @@ class GetIdtokenService {
       
       // idToken, accessToken, refreshToken などが含まれています
       // ここでは raw (文字列) の IDトークン を取得
+      // print(cognitoSession.userPoolTokensResult.value.idToken.raw);
       return cognitoSession.userPoolTokensResult.value.idToken.raw;
 
     } catch (e) {
