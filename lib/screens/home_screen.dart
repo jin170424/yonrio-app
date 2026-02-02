@@ -1,13 +1,12 @@
-import 'dart:io'; 
-// ★追加: ランダムID生成用
-import 'dart:math'; 
+import 'dart:io';
+import 'dart:math';
 import 'package:flutter/material.dart';
 import 'package:isar/isar.dart';
 import 'package:intl/intl.dart';
 import 'package:amplify_flutter/amplify_flutter.dart';
-import 'package:file_picker/file_picker.dart'; 
-import 'package:path_provider/path_provider.dart'; 
-import 'package:image_picker/image_picker.dart'; 
+import 'package:file_picker/file_picker.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../models/recording.dart';
 import 'recording_screen.dart';
@@ -15,6 +14,9 @@ import 'result_screen.dart';
 import 'login_screen.dart';
 import '../repositories/recording_repository.dart';
 import '../services/get_idtoken_service.dart';
+
+// 検索フィルタの種類
+enum SearchType { all, audio, image }
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -28,6 +30,10 @@ class _HomeScreenState extends State<HomeScreen> {
   late final RecordingRepository _repository;
   bool _isSyncing = false;
 
+  // 検索用ステート
+  final TextEditingController _searchController = TextEditingController();
+  SearchType _selectedType = SearchType.all;
+
   @override
   void initState() {
     super.initState();
@@ -35,38 +41,82 @@ class _HomeScreenState extends State<HomeScreen> {
     final isar = Isar.getInstance();
     if (isar != null) {
       _repository = RecordingRepository(isar);
-      _initRecordingStream();
+      // 初期表示（全件取得）
+      _updateRecordingStream();
+      // 画面表示時にメタデータ同期を実行
       _syncMetadataList();
     }
+
+    // 検索文字が変わるたびにリストを更新
+    _searchController.addListener(() {
+      _updateRecordingStream();
+    });
   }
 
-  void _initRecordingStream() {
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  // ★検索条件に基づいてストリームを更新する処理
+  void _updateRecordingStream() {
     final isar = Isar.getInstance();
-    if (isar != null) {
-      setState(() {
-        _recordingStream = isar.recordings
-            .where()
-            .sortByCreatedAtDesc()
-            .watch(fireImmediately: true);
-      });
+    if (isar == null) return;
+
+    final queryText = _searchController.text.trim();
+
+    // 【重要】型合わせのためのダミー条件 (実質全件)
+    var q = isar.recordings.filter().idGreaterThan(-1);
+
+    // 1. キーワード検索 (タイトル OR 文字起こし OR 要約)
+    if (queryText.isNotEmpty) {
+      q = q.and().group((g) => g
+        .titleContains(queryText, caseSensitive: false)
+        .or()
+        .transcriptionContains(queryText, caseSensitive: false)
+        .or()
+        .summaryContains(queryText, caseSensitive: false)
+      );
     }
+
+    // 2. タイプ別フィルタ (拡張子で判定)
+    if (_selectedType == SearchType.image) {
+      // 画像の場合
+      q = q.and().group((g) => g
+        .filePathEndsWith('.jpg', caseSensitive: false).or()
+        .filePathEndsWith('.jpeg', caseSensitive: false).or()
+        .filePathEndsWith('.png', caseSensitive: false)
+      );
+    } else if (_selectedType == SearchType.audio) {
+      // 音声の場合
+      q = q.and().group((g) => g
+        .filePathEndsWith('.wav', caseSensitive: false).or()
+        .filePathEndsWith('.m4a', caseSensitive: false).or()
+        .filePathEndsWith('.mp3', caseSensitive: false).or()
+        .filePathEndsWith('.aac', caseSensitive: false)
+      );
+    }
+
+    // 3. 作成日時の新しい順で監視
+    setState(() {
+      _recordingStream = q.sortByCreatedAtDesc().watch(fireImmediately: true);
+    });
   }
 
-  // ★追加: 一時的なユニークIDを生成する関数
+  // 一時的なユニークIDを生成
   String _generateUniqueId() {
     final random = Random();
     const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
     return List.generate(20, (index) => chars[random.nextInt(chars.length)]).join();
   }
 
-  // --- HEAD由来の機能: 名前変更・削除・メニュー ---
-
   // 名前変更ダイアログ
   void _showRenameDialog(Recording recording) {
     final TextEditingController controller = TextEditingController(text: recording.title);
-    
+
     showDialog(
-      context: context, 
+      context: context,
       builder: (context) {
         return AlertDialog(
           title: const Text('名前を変更'),
@@ -77,7 +127,7 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(context), 
+              onPressed: () => Navigator.pop(context),
               child: const Text('キャンセル')
             ),
             ElevatedButton(
@@ -93,7 +143,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   }
                 }
                 Navigator.pop(context);
-              }, 
+              },
               child: const Text('変更')
             ),
           ],
@@ -102,7 +152,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // 削除確認ダイアログと削除実行
+  // 削除確認ダイアログ
   Future<void> _confirmAndDelete(Recording recording) async {
     final confirmed = await showDialog<bool>(
       context: context,
@@ -112,11 +162,11 @@ class _HomeScreenState extends State<HomeScreen> {
           content: Text('「${recording.title}」を削除します。\nこの操作は元に戻せません。'),
           actions: [
             TextButton(
-              onPressed: () => Navigator.pop(context, false), // いいえ
+              onPressed: () => Navigator.pop(context, false),
               child: const Text('キャンセル'),
             ),
             TextButton(
-              onPressed: () => Navigator.pop(context, true), // はい
+              onPressed: () => Navigator.pop(context, true),
               style: TextButton.styleFrom(foregroundColor: Colors.red),
               child: const Text('削除する'),
             ),
@@ -126,24 +176,23 @@ class _HomeScreenState extends State<HomeScreen> {
     );
 
     if (confirmed == true) {
-      // 1. 実ファイルの削除 (スマホの容量を空けるため)
       try {
-        final file = File(recording.filePath);
-        if (await file.exists()) {
-          await file.delete();
+        if (recording.filePath.isNotEmpty) {
+           final file = File(recording.filePath);
+           if (await file.exists()) {
+             await file.delete();
+           }
         }
       } catch (e) {
         print("ファイル削除エラー: $e");
-        // ファイル削除に失敗してもDBからは消すように進める
       }
 
-      // 2. データベース(Isar)から削除
       final isar = Isar.getInstance();
       if (isar != null) {
         await isar.writeTxn(() async {
           await isar.recordings.delete(recording.id);
         });
-        
+
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('削除しました')),
@@ -152,7 +201,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // 長押し時のメニューシート
+  // アイテム長押しメニュー
   void _showItemMenu(Recording recording) {
     showModalBottomSheet(
       context: context,
@@ -168,16 +217,16 @@ class _HomeScreenState extends State<HomeScreen> {
                 leading: const Icon(Icons.edit, color: Colors.blue),
                 title: const Text('名前を変更'),
                 onTap: () {
-                  Navigator.pop(context); // シートを閉じる
-                  _showRenameDialog(recording); // 名前変更へ
+                  Navigator.pop(context);
+                  _showRenameDialog(recording);
                 },
               ),
               ListTile(
                 leading: const Icon(Icons.delete, color: Colors.red),
                 title: const Text('削除', style: TextStyle(color: Colors.red)),
                 onTap: () {
-                  Navigator.pop(context); // シートを閉じる
-                  _confirmAndDelete(recording); // 削除確認へ
+                  Navigator.pop(context);
+                  _confirmAndDelete(recording);
                 },
               ),
             ],
@@ -187,8 +236,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // --- origin/main由来の機能: 同期 ---
-
+  // メタデータ同期
   Future<void> _syncMetadataList() async {
     if (_isSyncing) return;
 
@@ -217,13 +265,12 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // --- 共通機能 ---
-
+  // ファイルインポート
   Future<void> _importFile() async {
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
-        allowedExtensions: ['mp3', 'm4a', 'wav', 'aac'], 
+        allowedExtensions: ['mp3', 'm4a', 'wav', 'aac'],
       );
 
       if (result != null && result.files.single.path != null) {
@@ -234,7 +281,6 @@ class _HomeScreenState extends State<HomeScreen> {
         final newPath = '${appDir.path}/imported_$fileName';
         await File(originalPath).copy(newPath);
 
-        // ユーザーIDを取得して ownerName に入れる
         String currentUserId = 'unknown_user';
         try {
             final user = await Amplify.Auth.getCurrentUser();
@@ -246,21 +292,20 @@ class _HomeScreenState extends State<HomeScreen> {
         final isar = Isar.getInstance();
         if (isar != null) {
           final newRecording = Recording()
-            ..title = "インポート: $fileName" 
+            ..title = "インポート: $fileName"
             ..filePath = newPath
-            ..durationSeconds = 0 
+            ..durationSeconds = 0
             ..createdAt = DateTime.now()
             ..updatedAt = DateTime.now()
             ..lastSyncTime = DateTime.fromMillisecondsSinceEpoch(0)
             ..ownerName = currentUserId
-            // ★修正: nullだと重複扱いされるため、一時的なIDを生成
             ..remoteId = _generateUniqueId()
-            ..status = 'pending'; 
+            ..status = 'pending';
 
           await isar.writeTxn(() async {
             await isar.recordings.put(newRecording);
           });
-          
+
           if(!mounted) return;
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('ファイルをインポートしました')),
@@ -269,12 +314,15 @@ class _HomeScreenState extends State<HomeScreen> {
       }
     } catch (e) {
       print('インポートエラー: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('インポート失敗: $e')),
-      );
+      if(mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('インポート失敗: $e')),
+        );
+      }
     }
   }
 
+  // 画像保存
   Future<void> _pickAndSaveImage(ImageSource source) async {
     try {
       final picker = ImagePicker();
@@ -287,18 +335,13 @@ class _HomeScreenState extends State<HomeScreen> {
       showDialog(
         context: context,
         barrierDismissible: false,
-        builder: (BuildContext context) {
-          return const Center(
-            child: CircularProgressIndicator(),
-          );
-        },
+        builder: (BuildContext context) => const Center(child: CircularProgressIndicator()),
       );
 
       final appDir = await getApplicationDocumentsDirectory();
       final fileName = 'ocr_${DateTime.now().millisecondsSinceEpoch}.jpg';
       final savedImage = await File(photo.path).copy('${appDir.path}/$fileName');
 
-      // ユーザーIDを取得して ownerName に入れる
       String currentUserId = 'unknown_user';
       try {
           final user = await Amplify.Auth.getCurrentUser();
@@ -310,14 +353,13 @@ class _HomeScreenState extends State<HomeScreen> {
       final isar = Isar.getInstance();
       if (isar != null) {
         final newRecording = Recording()
-          ..title = "画像: ${DateFormat('MM/dd HH:mm').format(DateTime.now())}" 
+          ..title = "画像: ${DateFormat('MM/dd HH:mm').format(DateTime.now())}"
           ..filePath = savedImage.path
-          ..durationSeconds = 0 
+          ..durationSeconds = 0
           ..createdAt = DateTime.now()
           ..updatedAt = DateTime.now()
           ..lastSyncTime = DateTime.fromMillisecondsSinceEpoch(0)
           ..ownerName = currentUserId
-          // ★修正: nullだと重複扱いされるため、一時的なIDを生成
           ..remoteId = _generateUniqueId()
           ..status = 'pending';
 
@@ -327,8 +369,7 @@ class _HomeScreenState extends State<HomeScreen> {
       }
 
       if (!mounted) return;
-
-      Navigator.pop(context); 
+      Navigator.pop(context);
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('リストに追加しました')),
@@ -346,6 +387,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  // 画像ソース選択
   void _showOcrSourceSelection() {
     showModalBottomSheet(
       context: context,
@@ -379,6 +421,45 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // フィルタチップのウィジェット
+  Widget _buildFilterChip(String label, SearchType type, {IconData? icon}) {
+    final isSelected = _selectedType == type;
+    return FilterChip(
+      label: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 16, color: isSelected ? Colors.white : Colors.grey),
+            const SizedBox(width: 4)
+          ],
+          Text(label),
+        ],
+      ),
+      selected: isSelected,
+      onSelected: (bool selected) {
+        setState(() {
+          if (isSelected && type != SearchType.all) {
+             _selectedType = SearchType.all;
+          } else {
+             _selectedType = type;
+          }
+          _updateRecordingStream();
+        });
+      },
+      backgroundColor: Colors.white,
+      selectedColor: Colors.blueAccent,
+      labelStyle: TextStyle(
+        color: isSelected ? Colors.white : Colors.black87,
+        fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+      ),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(20),
+        side: BorderSide(color: isSelected ? Colors.blueAccent : Colors.grey.shade300),
+      ),
+      showCheckmark: false,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -388,8 +469,8 @@ class _HomeScreenState extends State<HomeScreen> {
           IconButton(
             icon: _isSyncing
                 ? const SizedBox(
-                    width: 20, 
-                    height: 20, 
+                    width: 20,
+                    height: 20,
                     child: CircularProgressIndicator(strokeWidth: 2)
                   )
                 : const Icon(Icons.sync),
@@ -430,63 +511,192 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      body: _recordingStream == null
-          ? const Center(child: CircularProgressIndicator())
-          : StreamBuilder<List<Recording>>(
-              stream: _recordingStream,
-              builder: (context, snapshot) {
-                if (snapshot.hasError) {
-                  return Center(child: Text('エラー: ${snapshot.error}'));
-                }
-                final recordings = snapshot.data;
-                if (recordings == null || recordings.isEmpty) {
-                  return const Center(child: Text('データがありません'));
-                }
+      body: Column(
+        children: [
+          // 検索バーとフィルタチップエリア
+          Container(
+            padding: const EdgeInsets.all(12),
+            color: Colors.grey.shade100,
+            child: Column(
+              children: [
+                // 検索フィールド
+                TextField(
+                  controller: _searchController,
+                  decoration: InputDecoration(
+                    hintText: 'タイトル・文字起こし内容を検索...',
+                    prefixIcon: const Icon(Icons.search),
+                    suffixIcon: _searchController.text.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.clear),
+                            onPressed: () {
+                              _searchController.clear();
+                              FocusScope.of(context).unfocus();
+                            },
+                          )
+                        : null,
+                    filled: true,
+                    fillColor: Colors.white,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide.none,
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 16),
+                  ),
+                ),
+                const SizedBox(height: 10),
+                // フィルタ切り替え
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      _buildFilterChip('すべて', SearchType.all),
+                      const SizedBox(width: 8),
+                      _buildFilterChip('音声のみ', SearchType.audio, icon: Icons.mic),
+                      const SizedBox(width: 8),
+                      _buildFilterChip('画像のみ', SearchType.image, icon: Icons.image),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
 
-                return ListView.builder(
-                  itemCount: recordings.length,
-                  itemBuilder: (context, index) {
-                    final recording = recordings[index];
+          // リスト表示エリア
+          Expanded(
+            child: _recordingStream == null
+              ? const Center(child: CircularProgressIndicator())
+              : StreamBuilder<List<Recording>>(
+                  stream: _recordingStream,
+                  builder: (context, snapshot) {
+                    if (snapshot.hasError) {
+                      return Center(child: Text('エラー: ${snapshot.error}'));
+                    }
+                    final recordings = snapshot.data;
                     
-                    final path = recording.filePath.toLowerCase();
-                    final fileName = path.split('/').last;
-
-                    IconData leadIcon = Icons.mic;
-                    Color iconColor = Colors.blue;
-                    
-                    if (path.endsWith('.jpg') || path.endsWith('.jpeg') || path.endsWith('.png')) {
-                      leadIcon = Icons.image;
-                      iconColor = Colors.purple;
-                    } else if (fileName.startsWith('imported_')) {
-                      leadIcon = Icons.folder;
-                      iconColor = Colors.orange;
+                    if (recordings == null || recordings.isEmpty) {
+                      return Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            const Icon(Icons.search_off, size: 64, color: Colors.grey),
+                            const SizedBox(height: 16),
+                            Text(
+                              _searchController.text.isEmpty
+                                ? 'データがありません'
+                                : '見つかりませんでした',
+                              style: const TextStyle(color: Colors.grey),
+                            ),
+                          ],
+                        ),
+                      );
                     }
 
-                    return Card(
-                      child: ListTile(
-                        leading: Icon(leadIcon, color: iconColor),
-                        title: Text(recording.title),
-                        subtitle: Text(
-                          DateFormat('yyyy/MM/dd HH:mm').format(recording.createdAt)
-                        ),
-                        trailing: const Icon(Icons.chevron_right),
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => ResultScreen(recording: recording),
+                    return ListView.builder(
+                      itemCount: recordings.length,
+                      padding: const EdgeInsets.only(bottom: 80),
+                      itemBuilder: (context, index) {
+                        final recording = recordings[index];
+                        final path = recording.filePath.toLowerCase();
+                        final fileName = path.split('/').last;
+
+                        // 通常のアイコンロジック
+                        IconData leadIcon = Icons.mic;
+                        Color iconColor = Colors.blue;
+
+                        if (path.endsWith('.jpg') || path.endsWith('.jpeg') || path.endsWith('.png')) {
+                          leadIcon = Icons.image;
+                          iconColor = Colors.purple;
+                        } else if (fileName.startsWith('imported_')) {
+                          leadIcon = Icons.folder;
+                          iconColor = Colors.orange;
+                        }
+
+                        // ★変更点: ヒット箇所の判定ロジック
+                        final queryText = _searchController.text.trim().toLowerCase();
+                        final bool isSearching = queryText.isNotEmpty;
+                        
+                        // タイトルに含まれているか
+                        final bool isTitleMatch = recording.title.toLowerCase().contains(queryText);
+                        
+                        // 本文に含まれているか
+                        final bool isTranscriptMatch = (recording.transcription ?? '').toLowerCase().contains(queryText);
+                        
+                        // 要約に含まれているか
+                        final bool isSummaryMatch = (recording.summary ?? '').toLowerCase().contains(queryText);
+
+                        return Card(
+                          margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                          child: ListTile(
+                            leading: CircleAvatar(
+                                backgroundColor: iconColor.withOpacity(0.1),
+                                child: Icon(leadIcon, color: iconColor),
                             ),
-                          );
-                        },
-                        onLongPress: () {
-                          _showItemMenu(recording);
-                        },
-                      ),
+                            title: Text(recording.title),
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(DateFormat('yyyy/MM/dd HH:mm').format(recording.createdAt)),
+                                
+                                // ★変更点: ヒットした箇所の表示
+                                if (isSearching && !isTitleMatch) ...[
+                                  const SizedBox(height: 4),
+                                  if (isTranscriptMatch)
+                                    Row(
+                                      children: [
+                                        const Icon(Icons.description, size: 12, color: Colors.blueGrey),
+                                        const SizedBox(width: 4),
+                                        Expanded(
+                                          child: Text(
+                                            '本文に「${_searchController.text}」が含まれています',
+                                            style: const TextStyle(fontSize: 12, color: Colors.blueGrey, fontWeight: FontWeight.bold),
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  if (!isTranscriptMatch && isSummaryMatch)
+                                    Row(
+                                      children: [
+                                        const Icon(Icons.summarize, size: 12, color: Colors.orange),
+                                        const SizedBox(width: 4),
+                                        Expanded(
+                                          child: Text(
+                                            '要約に「${_searchController.text}」が含まれています',
+                                            style: const TextStyle(fontSize: 12, color: Colors.orange, fontWeight: FontWeight.bold),
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                ],
+                              ],
+                            ),
+                            trailing: const Icon(Icons.chevron_right),
+                            onTap: () {
+                              Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (context) => ResultScreen(
+                                    recording: recording,
+                                    searchQuery: _searchController.text.isNotEmpty 
+                                        ? _searchController.text 
+                                        : null,
+                                  ),
+                                ),
+                              );
+                            },
+                            onLongPress: () {
+                              _showItemMenu(recording);
+                            },
+                          ),
+                        );
+                      },
                     );
                   },
-                );
-              },
-            ),
+                ),
+          ),
+        ],
+      ),
 
       floatingActionButton: Column(
         mainAxisSize: MainAxisSize.min,
@@ -494,9 +704,9 @@ class _HomeScreenState extends State<HomeScreen> {
         children: [
           FloatingActionButton(
             heroTag: 'ocr',
-            mini: true, 
+            mini: true,
             backgroundColor: Colors.purple,
-            onPressed: _showOcrSourceSelection, 
+            onPressed: _showOcrSourceSelection,
             child: const Icon(Icons.camera_alt),
           ),
           const SizedBox(height: 16),

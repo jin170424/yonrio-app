@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:just_audio/just_audio.dart'; // HEAD由来
+import 'package:just_audio/just_audio.dart';
 import 'package:isar/isar.dart';
 import 'dart:io';
+// ★追加: スクロール制御用
+import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 
-// Main由来
 import 'package:voice_app/repositories/recording_repository.dart';
 import '../services/gemini_service.dart';
 import '../models/recording.dart';
@@ -16,8 +17,13 @@ enum DisplayMode { transcription, summary }
 
 class ResultScreen extends StatefulWidget {
   final Recording recording;
+  final String? searchQuery; // ★追加: 検索ワード受け取り
 
-  const ResultScreen({super.key, required this.recording});
+  const ResultScreen({
+    super.key, 
+    required this.recording,
+    this.searchQuery, // コンストラクタに追加
+  });
 
   @override
   State<ResultScreen> createState() => _ResultScreenState();
@@ -27,20 +33,20 @@ class _ResultScreenState extends State<ResultScreen> {
   final GeminiService _geminiService = GeminiService();
   late final RecordingRepository _repository;
 
-  // Stream & UI State (Main由来)
+  // Stream & UI State
   late Stream<Recording?> _recordingStream;
   DisplayMode _currentMode = DisplayMode.transcription;
   bool _isProcessing = false;
   bool _isLoading = false;
 
-  // Audio Player & Image State (HEAD由来)
+  // Audio Player & Image State
   final AudioPlayer _audioPlayer = AudioPlayer();
   bool _isPlaying = false;
   Duration _duration = Duration.zero;
   Duration _position = Duration.zero;
   bool _isImage = false;
   
-  // 翻訳用言語マップ (HEAD由来)
+  // 翻訳用言語マップ
   final Map<String, String> _targetLanguages = {
     '英語': 'English',
     '中国語': 'Simplified Chinese',
@@ -50,26 +56,30 @@ class _ResultScreenState extends State<ResultScreen> {
     'ドイツ語': 'German',
   };
 
+  // ★追加: 自動スクロール用コントローラー
+  final ItemScrollController _itemScrollController = ItemScrollController();
+  final ItemPositionsListener _itemPositionsListener = ItemPositionsListener.create();
+
   @override
   void initState() {
     super.initState();
-    final isar = Isar.getInstance(); // main.dart等で確保されている前提
+    final isar = Isar.getInstance(); 
     if (isar != null) {
       _repository = RecordingRepository(isar);
       // ストリームセットアップ
       _recordingStream = isar.recordings.watchObject(widget.recording.id, fireImmediately: true);
     }
     
-    // 画像判定 (HEAD由来)
+    // 画像判定
     final path = widget.recording.filePath.toLowerCase();
     _isImage = path.endsWith('.jpg') || path.endsWith('.jpeg') || path.endsWith('.png');
 
-    // プレイヤー初期化 (HEAD由来)
+    // プレイヤー初期化
     if (!_isImage) {
       _initAudioPlayer();
     }
 
-    // 自動同期 (Main由来)
+    // 自動同期
     _autoSyncIfNeeded();
   }
 
@@ -79,7 +89,7 @@ class _ResultScreenState extends State<ResultScreen> {
     super.dispose();
   }
 
-  // --- Audio Player Logic (HEAD由来) ---
+  // --- Audio Player Logic ---
   Future<void> _initAudioPlayer() async {
     try {
       if (await File(widget.recording.filePath).exists()) {
@@ -121,7 +131,7 @@ class _ResultScreenState extends State<ResultScreen> {
     return "$minutes:$seconds";
   }
 
-  // --- Sync Logic (Main由来) ---
+  // --- Sync Logic ---
   Future<void> _autoSyncIfNeeded() async {
     final isar = Isar.getInstance();
     if (isar == null) return;
@@ -129,16 +139,14 @@ class _ResultScreenState extends State<ResultScreen> {
     final recording = await isar.recordings.get(widget.recording.id);
     if (recording == null || recording.remoteId == null) return;
 
-    print("バックグラウンド同期を開始...");
     try {
       final tokenService = GetIdtokenService();
       final token = await tokenService.getIdtoken();
       if (token != null) {
         await _repository.syncTranscriptionAndSummary(recording, token);
         if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('最新データを取得しました'), duration: Duration(seconds: 1)),
-          );
+          // 同期完了メッセージは頻繁に出すと煩わしいので抑制してもOK
+          // ScaffoldMessenger.of(context).showSnackBar(...);
         }
       }
     } catch (e) {
@@ -171,7 +179,7 @@ class _ResultScreenState extends State<ResultScreen> {
     setState(() => _isProcessing = false);
   }
 
-  // --- S3 Upload Logic (Main由来 - より堅牢) ---
+  // --- S3 Upload Logic ---
   Future<void> s3Upload(String title) async {
     final file = File(widget.recording.filePath);
     try {
@@ -179,7 +187,6 @@ class _ResultScreenState extends State<ResultScreen> {
       final token = await tokenService.getIdtoken();
 
       if (token == null) {
-        print("トークンが取得できませんでした（未ログイン）");
         if (!mounted) return;
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('ログインが必要です')),
@@ -199,7 +206,6 @@ class _ResultScreenState extends State<ResultScreen> {
 
       final recordingId = result['recording_id'];
       
-      // Isar更新
       final isar = Isar.getInstance();
       if (isar != null && widget.recording.remoteId == null) {
         await isar.writeTxn(() async {
@@ -222,17 +228,15 @@ class _ResultScreenState extends State<ResultScreen> {
     }
   }
 
-  // --- Gemini / Translation Logic (HEAD & Main統合) ---
+  // --- Gemini / Translation Logic ---
   Future<void> _runGeminiTask(Future<String> Function() task, Recording recording) async {
     setState(() => _isLoading = true);
     try {
       final result = await task();
       
-      // 結果を保存
       final isar = Isar.getInstance();
       if (isar != null) {
         await isar.writeTxn(() async {
-          // ※簡易的にtranscriptionに入れる（本来はリスト構造への変換が望ましいが、一旦文字列として保存）
           recording.transcription = result;
           await isar.recordings.put(recording);
         });
@@ -282,11 +286,50 @@ class _ResultScreenState extends State<ResultScreen> {
     );
   }
 
-  // --- View Builders (Main由来) ---
+  // ★追加: ハイライト表示用のテキスト生成メソッド
+  Widget _buildHighlightedText(String text, String query) {
+    if (query.isEmpty) return Text(text, style: const TextStyle(fontSize: 15, height: 1.4));
+
+    final List<TextSpan> spans = [];
+    final String lowerText = text.toLowerCase();
+    final String lowerQuery = query.toLowerCase();
+    int start = 0;
+    
+    while (true) {
+      final int index = lowerText.indexOf(lowerQuery, start);
+      if (index == -1) {
+        spans.add(TextSpan(text: text.substring(start)));
+        break;
+      }
+      
+      if (index > start) {
+        spans.add(TextSpan(text: text.substring(start, index)));
+      }
+      
+      spans.add(TextSpan(
+        text: text.substring(index, index + query.length),
+        style: const TextStyle(
+          backgroundColor: Colors.yellow, // ハイライト色
+          fontWeight: FontWeight.bold,
+        ),
+      ));
+      
+      start = index + query.length;
+    }
+
+    return RichText(
+      text: TextSpan(
+        style: const TextStyle(fontSize: 15, height: 1.4, color: Colors.black),
+        children: spans,
+      ),
+    );
+  }
+
+  // --- View Builders ---
   Widget _buildTranscriptionList(Recording recording) {
     final segments = recording.transcripts.toList();
 
-    // セグメントがない場合は全文テキストを表示 (HEADの互換性)
+    // セグメントがない場合は全文テキストを表示
     if (segments.isEmpty) {
       return SingleChildScrollView(
         padding: const EdgeInsets.all(16),
@@ -301,11 +344,34 @@ class _ResultScreenState extends State<ResultScreen> {
 
     segments.sort((a, b) => a.startTimeMs.compareTo(b.startTimeMs));
 
-    return ListView.builder(
+    // ★追加: 最初にマッチするインデックスを探してスクロール
+    if (widget.searchQuery != null && widget.searchQuery!.isNotEmpty) {
+      final index = segments.indexWhere((s) => 
+        s.text.toLowerCase().contains(widget.searchQuery!.toLowerCase())
+      );
+      if (index != -1) {
+        // 描画後にジャンプさせる
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if(_itemScrollController.isAttached) {
+             _itemScrollController.jumpTo(index: index);
+          }
+        });
+      }
+    }
+
+    // ★変更: ScrollablePositionedListに変更
+    return ScrollablePositionedList.builder(
       itemCount: segments.length,
+      itemScrollController: _itemScrollController,
+      itemPositionsListener: _itemPositionsListener,
       padding: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
       itemBuilder: (context, index) {
         final segment = segments[index];
+        
+        // ★ハイライト判定
+        final bool isMatch = (widget.searchQuery != null && widget.searchQuery!.isNotEmpty &&
+            segment.text.toLowerCase().contains(widget.searchQuery!.toLowerCase()));
+
         return Padding(
           padding: const EdgeInsets.symmetric(vertical: 8.0),
           child: Column(
@@ -326,9 +392,12 @@ class _ResultScreenState extends State<ResultScreen> {
                 width: double.infinity,
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  // ヒットしている場合は背景を少し黄色くし、枠線をオレンジにする
+                  color: isMatch ? Colors.yellow.withOpacity(0.1) : Colors.white,
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: Colors.grey.shade300),
+                  border: isMatch 
+                      ? Border.all(color: Colors.orange, width: 2)
+                      : Border.all(color: Colors.grey.shade300),
                   boxShadow: [
                     BoxShadow(
                       color: Colors.grey.withOpacity(0.1),
@@ -337,10 +406,13 @@ class _ResultScreenState extends State<ResultScreen> {
                     )
                   ],
                 ),
-                child: Text(
-                  segment.text,
-                  style: const TextStyle(fontSize: 15, height: 1.4),
-                ),
+                // テキストハイライト関数を使用
+                child: widget.searchQuery != null 
+                    ? _buildHighlightedText(segment.text, widget.searchQuery!)
+                    : Text(
+                        segment.text,
+                        style: const TextStyle(fontSize: 15, height: 1.4),
+                      ),
               ),
             ],
           ),
@@ -371,7 +443,6 @@ class _ResultScreenState extends State<ResultScreen> {
 
   @override
   Widget build(BuildContext context) {
-    // MainのStreamBuilder構造を採用
     return StreamBuilder<Recording?>(
       stream: _recordingStream, 
       builder: (context, snapshot){
@@ -411,7 +482,7 @@ class _ResultScreenState extends State<ResultScreen> {
           ),
           body: Column(
             children: [
-              // 1. プレイヤー / 画像表示エリア (HEADのデザインを採用)
+              // 1. プレイヤー / 画像表示エリア
               Container(
                 width: double.infinity,
                 padding: const EdgeInsets.all(8),
@@ -462,13 +533,12 @@ class _ResultScreenState extends State<ResultScreen> {
                       ),
               ),
 
-              // 2. 操作ボタンエリア (MainとHEADを統合)
+              // 2. 操作ボタンエリア
               SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                 child: Row(
                   children: [
-                    // 文字起こしモード
                     ElevatedButton.icon(
                       onPressed: () => setState(() => _currentMode = DisplayMode.transcription),
                       style: ElevatedButton.styleFrom(
@@ -479,7 +549,6 @@ class _ResultScreenState extends State<ResultScreen> {
                     ),
                     const SizedBox(width: 10),
                     
-                    // 要約モード
                     ElevatedButton.icon(
                       onPressed: () => setState(() => _currentMode = DisplayMode.summary),
                       style: ElevatedButton.styleFrom(
@@ -490,7 +559,6 @@ class _ResultScreenState extends State<ResultScreen> {
                     ),
                     const SizedBox(width: 10),
 
-                    // クラウドアップロード
                     ElevatedButton.icon(
                       onPressed: _isLoading ? null : () => s3Upload(recording.title),
                       style: ElevatedButton.styleFrom(
@@ -502,14 +570,12 @@ class _ResultScreenState extends State<ResultScreen> {
                     ),
                     const SizedBox(width: 10),
 
-                    // 翻訳 (HEADの機能)
                     ElevatedButton.icon(
                       onPressed: _isLoading ? null : () => _showTranslationDialog(recording),
                       icon: const Icon(Icons.translate),
                       label: const Text('翻訳'),
                     ),
                     
-                    // ローカル処理 (HEADの機能: 必要な場合)
                     if (_isImage)
                        Padding(
                          padding: const EdgeInsets.only(left: 10),
@@ -525,7 +591,7 @@ class _ResultScreenState extends State<ResultScreen> {
 
               const Divider(height: 1),
 
-              // 3. コンテンツ表示エリア (Mainのロジックを採用)
+              // 3. コンテンツ表示エリア
               Expanded(
                 child: _isLoading 
                   ? const Center(child: CircularProgressIndicator())
