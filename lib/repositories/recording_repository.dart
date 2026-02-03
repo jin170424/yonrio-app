@@ -83,9 +83,17 @@ class RecordingRepository {
               ..endTimeMs = ((item['endTime'] ?? 0) * 1000).toInt()
               ..searchTokens = (item['searchTokens'] as List<dynamic>?)
                 ?.map((e) => e.toString())
-                .toList()
-              ..recording.value = targetRecording;
-          
+                .toList();
+
+            if (item['translations'] != null) {
+              final List<dynamic> trList = item['translations'];
+              segment.translations = trList.map((t) {
+                return TranslationData()
+                  ..langCode = t['langCode']
+                  ..text = t['text'];
+              }).toList();
+            }
+            segment.recording.value = targetRecording;
             newSegments.add(segment);
           }
 
@@ -379,6 +387,25 @@ class RecordingRepository {
       } catch (e) {
         print("削除同期失敗: $e");
       }
+    }
+  }
+
+  Future<void> requestTranslation(String recordingId, String targetLang, String idToken) async {
+    final uri = Uri.parse('$apiBaseUrl/translate');
+    final response = await http.post(
+      uri,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': idToken,
+      },
+      body: jsonEncode({
+        'recordingId': recordingId,
+        'targetLang': targetLang,
+      }),
+    );
+
+    if (response.statusCode != 202 && response.statusCode != 200) {
+      throw Exception('Translation Request Failed: ${response.body}');
     }
   }
 
