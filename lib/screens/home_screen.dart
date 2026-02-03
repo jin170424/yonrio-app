@@ -16,7 +16,7 @@ import '../repositories/recording_repository.dart';
 import '../services/get_idtoken_service.dart';
 
 // 検索フィルタの種類
-enum SearchType { all, audio, image }
+enum SearchType { all, audio, image, favorite }
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -59,7 +59,7 @@ class _HomeScreenState extends State<HomeScreen> {
     super.dispose();
   }
 
-  // ★検索条件に基づいてストリームを更新する処理
+  // 検索条件に基づいてストリームを更新する処理
   void _updateRecordingStream() {
     final isar = Isar.getInstance();
     if (isar == null) return;
@@ -80,22 +80,23 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
-    // 2. タイプ別フィルタ (拡張子で判定)
+    // 2. タイプ別フィルタ
     if (_selectedType == SearchType.image) {
-      // 画像の場合
       q = q.and().group((g) => g
         .filePathEndsWith('.jpg', caseSensitive: false).or()
         .filePathEndsWith('.jpeg', caseSensitive: false).or()
         .filePathEndsWith('.png', caseSensitive: false)
       );
     } else if (_selectedType == SearchType.audio) {
-      // 音声の場合
       q = q.and().group((g) => g
         .filePathEndsWith('.wav', caseSensitive: false).or()
         .filePathEndsWith('.m4a', caseSensitive: false).or()
         .filePathEndsWith('.mp3', caseSensitive: false).or()
         .filePathEndsWith('.aac', caseSensitive: false)
       );
+    } else if (_selectedType == SearchType.favorite) {
+      // お気に入りのみ表示
+      q = q.and().isFavoriteEqualTo(true);
     }
 
     // 3. 作成日時の新しい順で監視
@@ -213,6 +214,35 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              // お気に入り（スター）切替
+              ListTile(
+                leading: Icon(
+                  recording.isFavorite ? Icons.star : Icons.star_border,
+                  color: Colors.orange,
+                ),
+                title: Text(recording.isFavorite ? 'スターを外す' : 'スターを付ける'),
+                onTap: () async {
+                  Navigator.pop(context); // メニューを閉じる
+                  
+                  final isar = Isar.getInstance();
+                  if (isar != null) {
+                    await isar.writeTxn(() async {
+                      recording.isFavorite = !recording.isFavorite;
+                      await isar.recordings.put(recording);
+                    });
+                  }
+                  
+                  if (mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(recording.isFavorite ? 'スターを付けました' : 'スターを外しました'),
+                        duration: const Duration(seconds: 1),
+                      ),
+                    );
+                  }
+                },
+              ),
+              const Divider(),
               ListTile(
                 leading: const Icon(Icons.edit, color: Colors.blue),
                 title: const Text('名前を変更'),
@@ -300,7 +330,8 @@ class _HomeScreenState extends State<HomeScreen> {
             ..lastSyncTime = DateTime.fromMillisecondsSinceEpoch(0)
             ..ownerName = currentUserId
             ..remoteId = _generateUniqueId()
-            ..status = 'pending';
+            ..status = 'pending'
+            ..isFavorite = false;
 
           await isar.writeTxn(() async {
             await isar.recordings.put(newRecording);
@@ -361,7 +392,8 @@ class _HomeScreenState extends State<HomeScreen> {
           ..lastSyncTime = DateTime.fromMillisecondsSinceEpoch(0)
           ..ownerName = currentUserId
           ..remoteId = _generateUniqueId()
-          ..status = 'pending';
+          ..status = 'pending'
+          ..isFavorite = false;
 
         await isar.writeTxn(() async {
           await isar.recordings.put(newRecording);
@@ -460,6 +492,62 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  // ★修正: ステータスバッジの作成
+  Widget _buildStatusBadge(Recording recording) {
+    // ステータス判定
+    String text;
+    Color color;
+    IconData icon;
+    bool shouldShow = true;
+
+    if (recording.status == 'completed' || (recording.transcription != null && recording.transcription!.length > 10)) {
+      // 完了時は表示しない（スッキリさせるため）
+      return const SizedBox.shrink();
+    } else if (recording.status == 'processing') {
+      // ★修正箇所: 待機表示からアクション要求表示へ変更
+      text = '未解析'; 
+      color = Colors.blue; 
+      icon = Icons.touch_app; // タップを促すアイコン
+    } else if (recording.status == 'error') {
+      text = 'エラー';
+      color = Colors.red;
+      icon = Icons.error;
+    } else {
+      // remoteIdがない = 未アップロード
+      if (recording.remoteId == null) {
+        text = '未保存';
+        color = Colors.grey;
+        icon = Icons.cloud_off;
+      } else {
+        text = '待機中';
+        color = Colors.blueGrey;
+        icon = Icons.hourglass_empty;
+      }
+    }
+
+    if (!shouldShow) return const SizedBox.shrink();
+
+    return Container(
+      margin: const EdgeInsets.only(top: 4, bottom: 2),
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: color.withOpacity(0.5), width: 1),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          // ★修正箇所: スピナーを削除し、常にアイコンを表示
+          Icon(icon, size: 12, color: color),
+             
+          const SizedBox(width: 4),
+          Text(text, style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold)),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -551,6 +639,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     children: [
                       _buildFilterChip('すべて', SearchType.all),
                       const SizedBox(width: 8),
+                      // 「スター付き」フィルタ
+                      _buildFilterChip('スター付き', SearchType.favorite, icon: Icons.star),
+                      const SizedBox(width: 8),
                       _buildFilterChip('音声のみ', SearchType.audio, icon: Icons.mic),
                       const SizedBox(width: 8),
                       _buildFilterChip('画像のみ', SearchType.image, icon: Icons.image),
@@ -599,7 +690,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         final path = recording.filePath.toLowerCase();
                         final fileName = path.split('/').last;
 
-                        // 通常のアイコンロジック
+                        // アイコンロジック
                         IconData leadIcon = Icons.mic;
                         Color iconColor = Colors.blue;
 
@@ -611,17 +702,12 @@ class _HomeScreenState extends State<HomeScreen> {
                           iconColor = Colors.orange;
                         }
 
-                        // ★変更点: ヒット箇所の判定ロジック
+                        // ヒット箇所の判定
                         final queryText = _searchController.text.trim().toLowerCase();
                         final bool isSearching = queryText.isNotEmpty;
                         
-                        // タイトルに含まれているか
                         final bool isTitleMatch = recording.title.toLowerCase().contains(queryText);
-                        
-                        // 本文に含まれているか
                         final bool isTranscriptMatch = (recording.transcription ?? '').toLowerCase().contains(queryText);
-                        
-                        // 要約に含まれているか
                         final bool isSummaryMatch = (recording.summary ?? '').toLowerCase().contains(queryText);
 
                         return Card(
@@ -631,13 +717,26 @@ class _HomeScreenState extends State<HomeScreen> {
                                 backgroundColor: iconColor.withOpacity(0.1),
                                 child: Icon(leadIcon, color: iconColor),
                             ),
-                            title: Text(recording.title),
+                            title: Row(
+                              children: [
+                                Expanded(child: Text(recording.title, overflow: TextOverflow.ellipsis)),
+                                // スターアイコン
+                                if (recording.isFavorite)
+                                  const Padding(
+                                    padding: EdgeInsets.only(left: 4),
+                                    child: Icon(Icons.star, color: Colors.orange, size: 18),
+                                  ),
+                              ],
+                            ),
                             subtitle: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Text(DateFormat('yyyy/MM/dd HH:mm').format(recording.createdAt)),
                                 
-                                // ★変更点: ヒットした箇所の表示
+                                // ★ステータスバッジ表示
+                                _buildStatusBadge(recording),
+
+                                // 検索ヒット情報の表示
                                 if (isSearching && !isTitleMatch) ...[
                                   const SizedBox(height: 4),
                                   if (isTranscriptMatch)

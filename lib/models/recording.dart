@@ -34,6 +34,9 @@ class Recording {
   @Index()
   late DateTime updatedAt;
 
+  // ★ここが抜けていました（メタデータ同期の判定に使います）
+  late DateTime lastSyncTime;
+
   // ストリーミング再生用
   String? s3AudioUrl;
 
@@ -45,19 +48,23 @@ class Recording {
   String? sourceOriginalId;
 
   // DynamoDBのstatus
-  late String status;
+  late String status; // processing, completed, error
 
-  // 文字起こしテキスト全文
-  @Index(type: IndexType.value)
+  // 文字起こし結果 (全文)
+  @Index(type: IndexType.value, caseSensitive: false)
   String? transcription;
 
-  // AI要約
+  // 要約結果
+  @Index(type: IndexType.value, caseSensitive: false)
   String? summary;
 
-  late DateTime lastSyncTime;
+  // ★追加: お気に入りフラグ (デフォルトは false)
+  bool isFavorite = false;
 
+  // 他のユーザーへの共有状況
   List<SharedUser>? sharedWith;
-  
+
+  // 1対多のリレーション (文字起こしセグメント)
   final transcripts = IsarLinks<TranscriptSegment>();
 }
 

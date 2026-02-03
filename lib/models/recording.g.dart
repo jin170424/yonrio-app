@@ -32,10 +32,10 @@ const RecordingSchema = CollectionSchema(
       name: r'filePath',
       type: IsarType.string,
     ),
-    r'lastSyncTime': PropertySchema(
+    r'isFavorite': PropertySchema(
       id: 3,
-      name: r'lastSyncTime',
-      type: IsarType.dateTime,
+      name: r'isFavorite',
+      type: IsarType.bool,
     ),
     r'ownerName': PropertySchema(
       id: 4,
@@ -161,7 +161,20 @@ const RecordingSchema = CollectionSchema(
         IndexPropertySchema(
           name: r'transcription',
           type: IndexType.value,
-          caseSensitive: true,
+          caseSensitive: false,
+        )
+      ],
+    ),
+    r'summary': IndexSchema(
+      id: 7630605597744450915,
+      name: r'summary',
+      unique: false,
+      replace: false,
+      properties: [
+        IndexPropertySchema(
+          name: r'summary',
+          type: IndexType.value,
+          caseSensitive: false,
         )
       ],
     )
@@ -253,7 +266,7 @@ void _recordingSerialize(
   writer.writeDateTime(offsets[0], object.createdAt);
   writer.writeLong(offsets[1], object.durationSeconds);
   writer.writeString(offsets[2], object.filePath);
-  writer.writeDateTime(offsets[3], object.lastSyncTime);
+  writer.writeBool(offsets[3], object.isFavorite);
   writer.writeString(offsets[4], object.ownerName);
   writer.writeString(offsets[5], object.remoteId);
   writer.writeString(offsets[6], object.s3AudioUrl);
@@ -283,7 +296,7 @@ Recording _recordingDeserialize(
   object.durationSeconds = reader.readLong(offsets[1]);
   object.filePath = reader.readString(offsets[2]);
   object.id = id;
-  object.lastSyncTime = reader.readDateTime(offsets[3]);
+  object.isFavorite = reader.readBool(offsets[3]);
   object.ownerName = reader.readString(offsets[4]);
   object.remoteId = reader.readStringOrNull(offsets[5]);
   object.s3AudioUrl = reader.readStringOrNull(offsets[6]);
@@ -317,7 +330,7 @@ P _recordingDeserializeProp<P>(
     case 2:
       return (reader.readString(offset)) as P;
     case 3:
-      return (reader.readDateTime(offset)) as P;
+      return (reader.readBool(offset)) as P;
     case 4:
       return (reader.readString(offset)) as P;
     case 5:
@@ -455,6 +468,14 @@ extension RecordingQueryWhereSort
     return QueryBuilder.apply(this, (query) {
       return query.addWhereClause(
         const IndexWhereClause.any(indexName: r'transcription'),
+      );
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterWhere> anySummary() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addWhereClause(
+        const IndexWhereClause.any(indexName: r'summary'),
       );
     });
   }
@@ -1066,6 +1087,162 @@ extension RecordingQueryWhere
       }
     });
   }
+
+  QueryBuilder<Recording, Recording, QAfterWhereClause> summaryIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addWhereClause(IndexWhereClause.equalTo(
+        indexName: r'summary',
+        value: [null],
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterWhereClause> summaryIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addWhereClause(IndexWhereClause.between(
+        indexName: r'summary',
+        lower: [null],
+        includeLower: false,
+        upper: [],
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterWhereClause> summaryEqualTo(
+      String? summary) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addWhereClause(IndexWhereClause.equalTo(
+        indexName: r'summary',
+        value: [summary],
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterWhereClause> summaryNotEqualTo(
+      String? summary) {
+    return QueryBuilder.apply(this, (query) {
+      if (query.whereSort == Sort.asc) {
+        return query
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'summary',
+              lower: [],
+              upper: [summary],
+              includeUpper: false,
+            ))
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'summary',
+              lower: [summary],
+              includeLower: false,
+              upper: [],
+            ));
+      } else {
+        return query
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'summary',
+              lower: [summary],
+              includeLower: false,
+              upper: [],
+            ))
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'summary',
+              lower: [],
+              upper: [summary],
+              includeUpper: false,
+            ));
+      }
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterWhereClause> summaryGreaterThan(
+    String? summary, {
+    bool include = false,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addWhereClause(IndexWhereClause.between(
+        indexName: r'summary',
+        lower: [summary],
+        includeLower: include,
+        upper: [],
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterWhereClause> summaryLessThan(
+    String? summary, {
+    bool include = false,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addWhereClause(IndexWhereClause.between(
+        indexName: r'summary',
+        lower: [],
+        upper: [summary],
+        includeUpper: include,
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterWhereClause> summaryBetween(
+    String? lowerSummary,
+    String? upperSummary, {
+    bool includeLower = true,
+    bool includeUpper = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addWhereClause(IndexWhereClause.between(
+        indexName: r'summary',
+        lower: [lowerSummary],
+        includeLower: includeLower,
+        upper: [upperSummary],
+        includeUpper: includeUpper,
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterWhereClause> summaryStartsWith(
+      String SummaryPrefix) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addWhereClause(IndexWhereClause.between(
+        indexName: r'summary',
+        lower: [SummaryPrefix],
+        upper: ['$SummaryPrefix\u{FFFFF}'],
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterWhereClause> summaryIsEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addWhereClause(IndexWhereClause.equalTo(
+        indexName: r'summary',
+        value: [''],
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterWhereClause> summaryIsNotEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      if (query.whereSort == Sort.asc) {
+        return query
+            .addWhereClause(IndexWhereClause.lessThan(
+              indexName: r'summary',
+              upper: [''],
+            ))
+            .addWhereClause(IndexWhereClause.greaterThan(
+              indexName: r'summary',
+              lower: [''],
+            ));
+      } else {
+        return query
+            .addWhereClause(IndexWhereClause.greaterThan(
+              indexName: r'summary',
+              lower: [''],
+            ))
+            .addWhereClause(IndexWhereClause.lessThan(
+              indexName: r'summary',
+              upper: [''],
+            ));
+      }
+    });
+  }
 }
 
 extension RecordingQueryFilter
@@ -1364,57 +1541,12 @@ extension RecordingQueryFilter
     });
   }
 
-  QueryBuilder<Recording, Recording, QAfterFilterCondition> lastSyncTimeEqualTo(
-      DateTime value) {
+  QueryBuilder<Recording, Recording, QAfterFilterCondition> isFavoriteEqualTo(
+      bool value) {
     return QueryBuilder.apply(this, (query) {
       return query.addFilterCondition(FilterCondition.equalTo(
-        property: r'lastSyncTime',
+        property: r'isFavorite',
         value: value,
-      ));
-    });
-  }
-
-  QueryBuilder<Recording, Recording, QAfterFilterCondition>
-      lastSyncTimeGreaterThan(
-    DateTime value, {
-    bool include = false,
-  }) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.greaterThan(
-        include: include,
-        property: r'lastSyncTime',
-        value: value,
-      ));
-    });
-  }
-
-  QueryBuilder<Recording, Recording, QAfterFilterCondition>
-      lastSyncTimeLessThan(
-    DateTime value, {
-    bool include = false,
-  }) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.lessThan(
-        include: include,
-        property: r'lastSyncTime',
-        value: value,
-      ));
-    });
-  }
-
-  QueryBuilder<Recording, Recording, QAfterFilterCondition> lastSyncTimeBetween(
-    DateTime lower,
-    DateTime upper, {
-    bool includeLower = true,
-    bool includeUpper = true,
-  }) {
-    return QueryBuilder.apply(this, (query) {
-      return query.addFilterCondition(FilterCondition.between(
-        property: r'lastSyncTime',
-        lower: lower,
-        includeLower: includeLower,
-        upper: upper,
-        includeUpper: includeUpper,
       ));
     });
   }
@@ -2991,15 +3123,15 @@ extension RecordingQuerySortBy on QueryBuilder<Recording, Recording, QSortBy> {
     });
   }
 
-  QueryBuilder<Recording, Recording, QAfterSortBy> sortByLastSyncTime() {
+  QueryBuilder<Recording, Recording, QAfterSortBy> sortByIsFavorite() {
     return QueryBuilder.apply(this, (query) {
-      return query.addSortBy(r'lastSyncTime', Sort.asc);
+      return query.addSortBy(r'isFavorite', Sort.asc);
     });
   }
 
-  QueryBuilder<Recording, Recording, QAfterSortBy> sortByLastSyncTimeDesc() {
+  QueryBuilder<Recording, Recording, QAfterSortBy> sortByIsFavoriteDesc() {
     return QueryBuilder.apply(this, (query) {
-      return query.addSortBy(r'lastSyncTime', Sort.desc);
+      return query.addSortBy(r'isFavorite', Sort.desc);
     });
   }
 
@@ -3176,15 +3308,15 @@ extension RecordingQuerySortThenBy
     });
   }
 
-  QueryBuilder<Recording, Recording, QAfterSortBy> thenByLastSyncTime() {
+  QueryBuilder<Recording, Recording, QAfterSortBy> thenByIsFavorite() {
     return QueryBuilder.apply(this, (query) {
-      return query.addSortBy(r'lastSyncTime', Sort.asc);
+      return query.addSortBy(r'isFavorite', Sort.asc);
     });
   }
 
-  QueryBuilder<Recording, Recording, QAfterSortBy> thenByLastSyncTimeDesc() {
+  QueryBuilder<Recording, Recording, QAfterSortBy> thenByIsFavoriteDesc() {
     return QueryBuilder.apply(this, (query) {
-      return query.addSortBy(r'lastSyncTime', Sort.desc);
+      return query.addSortBy(r'isFavorite', Sort.desc);
     });
   }
 
@@ -3332,9 +3464,9 @@ extension RecordingQueryWhereDistinct
     });
   }
 
-  QueryBuilder<Recording, Recording, QDistinct> distinctByLastSyncTime() {
+  QueryBuilder<Recording, Recording, QDistinct> distinctByIsFavorite() {
     return QueryBuilder.apply(this, (query) {
-      return query.addDistinctBy(r'lastSyncTime');
+      return query.addDistinctBy(r'isFavorite');
     });
   }
 
@@ -3437,9 +3569,9 @@ extension RecordingQueryProperty
     });
   }
 
-  QueryBuilder<Recording, DateTime, QQueryOperations> lastSyncTimeProperty() {
+  QueryBuilder<Recording, bool, QQueryOperations> isFavoriteProperty() {
     return QueryBuilder.apply(this, (query) {
-      return query.addPropertyName(r'lastSyncTime');
+      return query.addPropertyName(r'isFavorite');
     });
   }
 
