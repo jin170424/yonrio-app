@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:isar/isar.dart';
 import 'dart:io';
-// ★追加: スクロール制御用
+// スクロール制御用
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 
 import 'package:voice_app/repositories/recording_repository.dart';
@@ -17,12 +17,12 @@ enum DisplayMode { transcription, summary }
 
 class ResultScreen extends StatefulWidget {
   final Recording recording;
-  final String? searchQuery; // ★追加: 検索ワード受け取り
+  final String? searchQuery; // ホーム画面から引き継いだ検索ワード
 
   const ResultScreen({
     super.key, 
     required this.recording,
-    this.searchQuery, // コンストラクタに追加
+    this.searchQuery, 
   });
 
   @override
@@ -36,8 +36,13 @@ class _ResultScreenState extends State<ResultScreen> {
   // Stream & UI State
   late Stream<Recording?> _recordingStream;
   DisplayMode _currentMode = DisplayMode.transcription;
-  bool _isProcessing = false;
-  bool _isLoading = false;
+  bool _isProcessing = false; // 同期・保存中のローディング判定用
+  bool _isLoading = false;    // Gemini処理中の判定用
+
+  // 検索機能用のステート
+  final TextEditingController _searchController = TextEditingController();
+  bool _isSearchBarVisible = false; // 検索バーを表示しているか
+  String? _previousJumpQuery;       // 前回スクロールジャンプした時のキーワード（無限ループ防止用）
 
   // Audio Player & Image State
   final AudioPlayer _audioPlayer = AudioPlayer();
@@ -56,7 +61,7 @@ class _ResultScreenState extends State<ResultScreen> {
     'ドイツ語': 'German',
   };
 
-  // ★追加: 自動スクロール用コントローラー
+  // 自動スクロール用コントローラー
   final ItemScrollController _itemScrollController = ItemScrollController();
   final ItemPositionsListener _itemPositionsListener = ItemPositionsListener.create();
 
@@ -66,8 +71,13 @@ class _ResultScreenState extends State<ResultScreen> {
     final isar = Isar.getInstance(); 
     if (isar != null) {
       _repository = RecordingRepository(isar);
-      // ストリームセットアップ
       _recordingStream = isar.recordings.watchObject(widget.recording.id, fireImmediately: true);
+    }
+
+    // 初期検索ワードの設定
+    if (widget.searchQuery != null && widget.searchQuery!.isNotEmpty) {
+      _searchController.text = widget.searchQuery!;
+      _isSearchBarVisible = true;
     }
     
     // 画像判定
@@ -79,13 +89,13 @@ class _ResultScreenState extends State<ResultScreen> {
       _initAudioPlayer();
     }
 
-    // 自動同期
     _autoSyncIfNeeded();
   }
 
   @override
   void dispose() {
     _audioPlayer.dispose();
+    _searchController.dispose();
     super.dispose();
   }
 
@@ -137,17 +147,13 @@ class _ResultScreenState extends State<ResultScreen> {
     if (isar == null) return;
     
     final recording = await isar.recordings.get(widget.recording.id);
-    if (recording == null || recording.remoteId == null) return;
+    if (recording == null || recording.remoteId == null || recording.status == 'pending') return;
 
     try {
       final tokenService = GetIdtokenService();
       final token = await tokenService.getIdtoken();
       if (token != null) {
         await _repository.syncTranscriptionAndSummary(recording, token);
-        if (mounted) {
-          // 同期完了メッセージは頻繁に出すと煩わしいので抑制してもOK
-          // ScaffoldMessenger.of(context).showSnackBar(...);
-        }
       }
     } catch (e) {
       print("バックグラウンド同期失敗 (無視可): $e");
@@ -181,17 +187,15 @@ class _ResultScreenState extends State<ResultScreen> {
 
   // --- S3 Upload Logic ---
   Future<void> s3Upload(String title) async {
+    setState(() => _isProcessing = true);
+    
     final file = File(widget.recording.filePath);
     try {
       final tokenService = GetIdtokenService();
       final token = await tokenService.getIdtoken();
 
       if (token == null) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('ログインが必要です')),
-        );
-        return;
+        throw Exception('ログインが必要です');
       }
 
       final uploadService = S3UploadService();
@@ -207,9 +211,10 @@ class _ResultScreenState extends State<ResultScreen> {
       final recordingId = result['recording_id'];
       
       final isar = Isar.getInstance();
-      if (isar != null && widget.recording.remoteId == null) {
+      if (isar != null) {
         await isar.writeTxn(() async {
           widget.recording.remoteId = recordingId;
+          widget.recording.status = 'processing'; 
           await isar.recordings.put(widget.recording);
         });
       }
@@ -225,6 +230,10 @@ class _ResultScreenState extends State<ResultScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('エラーが発生しました: $e')),
       );
+    } finally {
+      if (mounted) {
+        setState(() => _isProcessing = false);
+      }
     }
   }
 
@@ -286,7 +295,9 @@ class _ResultScreenState extends State<ResultScreen> {
     );
   }
 
-  // ★追加: ハイライト表示用のテキスト生成メソッド
+  // --- UI Helpers ---
+
+  // ハイライト表示用
   Widget _buildHighlightedText(String text, String query) {
     if (query.isEmpty) return Text(text, style: const TextStyle(fontSize: 15, height: 1.4));
 
@@ -309,7 +320,7 @@ class _ResultScreenState extends State<ResultScreen> {
       spans.add(TextSpan(
         text: text.substring(index, index + query.length),
         style: const TextStyle(
-          backgroundColor: Colors.yellow, // ハイライト色
+          backgroundColor: Colors.yellow, 
           fontWeight: FontWeight.bold,
         ),
       ));
@@ -325,11 +336,36 @@ class _ResultScreenState extends State<ResultScreen> {
     );
   }
 
+  // ★追加: コンパクトなモード切り替えボタンのパーツ
+  Widget _buildModeBtn(String label, DisplayMode mode) {
+    final bool isSelected = _currentMode == mode;
+    return GestureDetector(
+      onTap: () => setState(() => _currentMode = mode),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected ? Colors.white : Colors.transparent,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: isSelected
+              ? [BoxShadow(color: Colors.black.withOpacity(0.1), blurRadius: 4)]
+              : [],
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color: isSelected ? Colors.black : Colors.grey[700],
+            fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+            fontSize: 13,
+          ),
+        ),
+      ),
+    );
+  }
+
   // --- View Builders ---
   Widget _buildTranscriptionList(Recording recording) {
     final segments = recording.transcripts.toList();
 
-    // セグメントがない場合は全文テキストを表示
     if (segments.isEmpty) {
       return SingleChildScrollView(
         padding: const EdgeInsets.all(16),
@@ -344,22 +380,24 @@ class _ResultScreenState extends State<ResultScreen> {
 
     segments.sort((a, b) => a.startTimeMs.compareTo(b.startTimeMs));
 
-    // ★追加: 最初にマッチするインデックスを探してスクロール
-    if (widget.searchQuery != null && widget.searchQuery!.isNotEmpty) {
+    // 検索ワードが変わった時だけスクロール処理
+    final currentQuery = _searchController.text;
+    if (currentQuery.isNotEmpty && currentQuery != _previousJumpQuery) {
       final index = segments.indexWhere((s) => 
-        s.text.toLowerCase().contains(widget.searchQuery!.toLowerCase())
+        s.text.toLowerCase().contains(currentQuery.toLowerCase())
       );
       if (index != -1) {
-        // 描画後にジャンプさせる
         WidgetsBinding.instance.addPostFrameCallback((_) {
           if(_itemScrollController.isAttached) {
              _itemScrollController.jumpTo(index: index);
           }
         });
+        _previousJumpQuery = currentQuery;
       }
+    } else if (currentQuery.isEmpty) {
+      _previousJumpQuery = null;
     }
 
-    // ★変更: ScrollablePositionedListに変更
     return ScrollablePositionedList.builder(
       itemCount: segments.length,
       itemScrollController: _itemScrollController,
@@ -367,10 +405,8 @@ class _ResultScreenState extends State<ResultScreen> {
       padding: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
       itemBuilder: (context, index) {
         final segment = segments[index];
-        
-        // ★ハイライト判定
-        final bool isMatch = (widget.searchQuery != null && widget.searchQuery!.isNotEmpty &&
-            segment.text.toLowerCase().contains(widget.searchQuery!.toLowerCase()));
+        final bool isMatch = (currentQuery.isNotEmpty &&
+            segment.text.toLowerCase().contains(currentQuery.toLowerCase()));
 
         return Padding(
           padding: const EdgeInsets.symmetric(vertical: 8.0),
@@ -392,7 +428,6 @@ class _ResultScreenState extends State<ResultScreen> {
                 width: double.infinity,
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  // ヒットしている場合は背景を少し黄色くし、枠線をオレンジにする
                   color: isMatch ? Colors.yellow.withOpacity(0.1) : Colors.white,
                   borderRadius: BorderRadius.circular(12),
                   border: isMatch 
@@ -406,13 +441,7 @@ class _ResultScreenState extends State<ResultScreen> {
                     )
                   ],
                 ),
-                // テキストハイライト関数を使用
-                child: widget.searchQuery != null 
-                    ? _buildHighlightedText(segment.text, widget.searchQuery!)
-                    : Text(
-                        segment.text,
-                        style: const TextStyle(fontSize: 15, height: 1.4),
-                      ),
+                child: _buildHighlightedText(segment.text, currentQuery),
               ),
             ],
           ),
@@ -436,7 +465,7 @@ class _ResultScreenState extends State<ResultScreen> {
             borderRadius: BorderRadius.circular(8),
             border: Border.all(color: Colors.orange.withOpacity(0.2)),
         ),
-        child: Text(text, style: const TextStyle(fontSize: 16)),
+        child: _buildHighlightedText(text, _searchController.text),
       ),
     );
   }
@@ -457,16 +486,32 @@ class _ResultScreenState extends State<ResultScreen> {
 
         final String shareContent = "【要約】\n${recording.summary ?? 'なし'}\n\n【全文】\n${recording.transcription ?? 'なし'}";
 
+        // アクションボタン（保存 or 同期）
+        Widget actionButton;
+        if (_isProcessing) {
+           actionButton = const Padding(
+             padding: EdgeInsets.all(12.0),
+             child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2)),
+           );
+        } else if (recording.status == 'pending' || recording.remoteId == null) {
+          actionButton = IconButton(
+            icon: const Icon(Icons.cloud_upload),
+            tooltip: 'クラウドに保存',
+            onPressed: () => s3Upload(recording.title),
+          );
+        } else {
+          actionButton = IconButton(
+            icon: const Icon(Icons.sync),
+            tooltip: 'クラウドから結果を取得',
+            onPressed: () => _manualSync(),
+          );
+        }
+
         return Scaffold(
           appBar: AppBar(
             title: Text(recording.title),
             actions: [
-              if (recording.remoteId != null)
-                IconButton(
-                  icon: const Icon(Icons.sync),
-                  tooltip: 'クラウドから結果を取得',
-                  onPressed: _isProcessing ? null : () => _manualSync(),
-                ),
+              actionButton,
               IconButton(
                 icon: const Icon(Icons.share),
                 onPressed: () {
@@ -485,7 +530,7 @@ class _ResultScreenState extends State<ResultScreen> {
               // 1. プレイヤー / 画像表示エリア
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.all(8),
+                padding: const EdgeInsets.fromLTRB(8, 8, 8, 0),
                 decoration: BoxDecoration(color: Colors.grey.shade50),
                 child: _isImage
                     ? ClipRRect(
@@ -508,13 +553,21 @@ class _ResultScreenState extends State<ResultScreen> {
                                 onPressed: _togglePlay,
                               ),
                               Expanded(
-                                child: Slider(
-                                  min: 0,
-                                  max: _duration.inMilliseconds.toDouble(),
-                                  value: _position.inMilliseconds.toDouble().clamp(0, _duration.inMilliseconds.toDouble()),
-                                  onChanged: (value) {
-                                    _audioPlayer.seek(Duration(milliseconds: value.toInt()));
-                                  },
+                                // ★修正: シークバーを細くスタイリッシュに
+                                child: SliderTheme(
+                                  data: SliderTheme.of(context).copyWith(
+                                    trackHeight: 3.0, // トラックの高さ
+                                    thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6.0), // つまみのサイズ
+                                    overlayShape: const RoundSliderOverlayShape(overlayRadius: 14.0),
+                                  ),
+                                  child: Slider(
+                                    min: 0,
+                                    max: _duration.inMilliseconds.toDouble(),
+                                    value: _position.inMilliseconds.toDouble().clamp(0, _duration.inMilliseconds.toDouble()),
+                                    onChanged: (value) {
+                                      _audioPlayer.seek(Duration(milliseconds: value.toInt()));
+                                    },
+                                  ),
                                 ),
                               ),
                             ],
@@ -524,8 +577,8 @@ class _ResultScreenState extends State<ResultScreen> {
                             child: Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                Text(_formatDuration(_position)),
-                                Text(_formatDuration(_duration)),
+                                Text(_formatDuration(_position), style: const TextStyle(fontSize: 12)),
+                                Text(_formatDuration(_duration), style: const TextStyle(fontSize: 12)),
                               ],
                             ),
                           ),
@@ -533,65 +586,104 @@ class _ResultScreenState extends State<ResultScreen> {
                       ),
               ),
 
-              // 2. 操作ボタンエリア
-              SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+              // 2. 検索バー (トグル表示)
+              if (_isSearchBarVisible)
+                Container(
+                  color: Colors.grey.shade50,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  child: TextField(
+                    controller: _searchController,
+                    autofocus: true,
+                    decoration: InputDecoration(
+                      hintText: 'ページ内検索...',
+                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                      isDense: true,
+                      filled: true,
+                      fillColor: Colors.white,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8),
+                        borderSide: BorderSide.none
+                      ),
+                      prefixIcon: const Icon(Icons.search, size: 20),
+                      suffixIcon: IconButton(
+                        icon: const Icon(Icons.clear, size: 18),
+                        onPressed: () {
+                          _searchController.clear();
+                          // 空にして再描画することでハイライト消去
+                          setState(() {
+                             _previousJumpQuery = null;
+                          });
+                        },
+                      ),
+                    ),
+                    onChanged: (val) => setState((){}),
+                  ),
+                ),
+
+              // 3. コンパクトコントロールバー
+              Container(
+                padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade50,
+                  border: Border(bottom: BorderSide(color: Colors.grey.shade300)),
+                ),
                 child: Row(
                   children: [
-                    ElevatedButton.icon(
-                      onPressed: () => setState(() => _currentMode = DisplayMode.transcription),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _currentMode == DisplayMode.transcription ? Colors.blue[100] : null,
-                      ),
-                      icon: const Icon(Icons.description),
-                      label: const Text('文字起こし'),
+                    // 検索ボタン (トグル)
+                    IconButton(
+                      icon: Icon(_isSearchBarVisible ? Icons.expand_less : Icons.search),
+                      tooltip: _isSearchBarVisible ? "検索を閉じる" : "検索",
+                      color: _isSearchBarVisible ? Colors.blue : Colors.grey[700],
+                      onPressed: () {
+                        setState(() {
+                          _isSearchBarVisible = !_isSearchBarVisible;
+                          if (!_isSearchBarVisible) {
+                            _searchController.clear();
+                            _previousJumpQuery = null;
+                          }
+                        });
+                      },
                     ),
-                    const SizedBox(width: 10),
                     
-                    ElevatedButton.icon(
-                      onPressed: () => setState(() => _currentMode = DisplayMode.summary),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: _currentMode == DisplayMode.summary ? Colors.blue[100] : null,
+                    const Spacer(),
+                    
+                    // モード切り替え (セグメントボタン風)
+                    Container(
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade200,
+                        borderRadius: BorderRadius.circular(20),
                       ),
-                      icon: const Icon(Icons.summarize),
-                      label: const Text('要約'),
-                    ),
-                    const SizedBox(width: 10),
-
-                    ElevatedButton.icon(
-                      onPressed: _isLoading ? null : () => s3Upload(recording.title),
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.orangeAccent,
-                        foregroundColor: Colors.white,
+                      padding: const EdgeInsets.all(4),
+                      child: Row(
+                        children: [
+                          _buildModeBtn("文字起こし", DisplayMode.transcription),
+                          _buildModeBtn("要約", DisplayMode.summary),
+                        ],
                       ),
-                      icon: const Icon(Icons.cloud_upload),
-                      label: const Text('保存'),
                     ),
-                    const SizedBox(width: 10),
-
-                    ElevatedButton.icon(
-                      onPressed: _isLoading ? null : () => _showTranslationDialog(recording),
+                    
+                    const Spacer(),
+                    
+                    // 翻訳ボタン
+                    IconButton(
                       icon: const Icon(Icons.translate),
-                      label: const Text('翻訳'),
+                      tooltip: "翻訳",
+                      color: Colors.grey[700],
+                      onPressed: _isLoading ? null : () => _showTranslationDialog(recording),
                     ),
                     
                     if (_isImage)
-                       Padding(
-                         padding: const EdgeInsets.only(left: 10),
-                         child: IconButton(
-                           icon: const Icon(Icons.refresh), 
-                           tooltip: "再解析",
-                           onPressed: () => _runGeminiTask(() => _geminiService.transcribeImage(File(recording.filePath)), recording),
-                         ),
+                       IconButton(
+                         icon: const Icon(Icons.refresh), 
+                         tooltip: "再解析",
+                         color: Colors.grey[700],
+                         onPressed: () => _runGeminiTask(() => _geminiService.transcribeImage(File(recording.filePath)), recording),
                        ),
                   ],
                 ),
               ),
 
-              const Divider(height: 1),
-
-              // 3. コンテンツ表示エリア
+              // 4. コンテンツ表示エリア
               Expanded(
                 child: _isLoading 
                   ? const Center(child: CircularProgressIndicator())
