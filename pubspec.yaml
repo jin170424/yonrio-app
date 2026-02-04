@@ -24,14 +24,14 @@ dependencies:
   # ファイルピッカー
   file_picker: ^8.0.0
   
-  # 録音・再生（安定版）
+  # 録音・再生
   record: ^4.4.4
   just_audio: ^0.9.36
 
   # 画像ピッカー
   image_picker: ^1.0.7
   
-  # ★ここを修正！ エラーの指示通り 0.4.7 にします（これでFlashも動きます）
+  # 生成AI
   google_generative_ai: ^0.4.7
   
   # 共有
@@ -53,7 +53,9 @@ dependencies:
   # 接続チェック
   internet_connection_checker_plus: ^2.7.2
 
-  
+  # バックエンド機能 (takiブランチ由来)
+  shared_preferences: ^2.5.3
+  dio: ^5.9.0
 
 dev_dependencies:
   flutter_test:
@@ -62,7 +64,6 @@ dev_dependencies:
   build_runner: ^2.4.8
   isar_generator: ^3.1.0
 
-# ★念のための保険：バージョンの喧嘩を強制解決
 dependency_overrides:
   intl: ^0.19.0
 

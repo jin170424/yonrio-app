@@ -1,22 +1,21 @@
-import 'package:flutter/material.dart';
 import 'package:isar/isar.dart';
 import 'package:voice_app/models/transcript_segment.dart';
 
-// ファイル名と同じにする必要がある (コード生成用)
+// 生成されるファイル名を指定
 part 'recording.g.dart';
 
 @collection
 class Recording {
-  // 自動採番のID
+  // 自動採番ID
   Id id = Isar.autoIncrement;
 
   // DynamoDBのid(UUID)
-  @Index(unique: true, replace:true)
-  late String? remoteId;
+  @Index(unique: true, replace: true)
+  String? remoteId;
 
   late String ownerName;
 
-  // タイトル (検索用にインデックスを貼る)
+  // タイトル (検索用にインデックス)
   @Index(type: IndexType.value)
   late String title;
 
@@ -26,16 +25,16 @@ class Recording {
   // 録音時間（秒）
   int durationSeconds = 0;
 
-  // 作成日時 (並び替え用)
+  // 作成日時
   @Index()
-  late DateTime createdAt;
+  DateTime createdAt = DateTime.now();
 
   // 更新日時
   @Index()
-  late DateTime updatedAt;
+  DateTime updatedAt = DateTime.now();
 
-  // ★ここが抜けていました（メタデータ同期の判定に使います）
-  late DateTime lastSyncTime;
+  // メタデータ同期の判定に使用
+  DateTime? lastSyncTime;
 
   // ストリーミング再生用
   String? s3AudioUrl;
@@ -43,12 +42,12 @@ class Recording {
   // 翻訳データの再取得や同期用
   String? s3TranscriptJsonUrl;
 
-  // 共有データの管理用(自分が作成したものか、共有されたものか)
-  // 削除時にS3を消していいかの判定ロジックに使用
+  // 共有データの管理用
   String? sourceOriginalId;
 
-  // DynamoDBのstatus
-  late String status; // processing, completed, error
+  // ステータス (processing, completed, errorなど)
+  // 安全のためNullableに統一
+  String? status;
 
   // 文字起こし結果 (全文)
   @Index(type: IndexType.value, caseSensitive: false)
@@ -58,13 +57,17 @@ class Recording {
   @Index(type: IndexType.value, caseSensitive: false)
   String? summary;
 
-  // ★追加: お気に入りフラグ (デフォルトは false)
+  // お気に入りフラグ (HEAD由来)
   bool isFavorite = false;
 
   // 他のユーザーへの共有状況
   List<SharedUser>? sharedWith;
 
-  // 1対多のリレーション (文字起こしセグメント)
+  // クラウド同期用のフラグ (taki由来)
+  bool needsCloudUpdate = false;
+  bool needsCloudDelete = false;
+  
+  // 1対多のリレーション
   final transcripts = IsarLinks<TranscriptSegment>();
 }
 

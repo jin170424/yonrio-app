@@ -2,8 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:just_audio/just_audio.dart';
 import 'package:isar/isar.dart';
 import 'dart:io';
+// Dioを追加
+import 'package:dio/dio.dart';
 // スクロール制御用
 import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
+// ネットワークチェック用
+import 'package:voice_app/utils/network_utils.dart';
 
 import 'package:voice_app/repositories/recording_repository.dart';
 import '../services/gemini_service.dart';
@@ -70,7 +74,8 @@ class _ResultScreenState extends State<ResultScreen> {
     super.initState();
     final isar = Isar.getInstance(); 
     if (isar != null) {
-      _repository = RecordingRepository(isar);
+      // ★修正: Dioを渡して初期化
+      _repository = RecordingRepository(isar: isar, dio: Dio());
       _recordingStream = isar.recordings.watchObject(widget.recording.id, fireImmediately: true);
     }
 
@@ -149,6 +154,13 @@ class _ResultScreenState extends State<ResultScreen> {
     final recording = await isar.recordings.get(widget.recording.id);
     if (recording == null || recording.remoteId == null || recording.status == 'pending') return;
 
+    // ★統合: 同期フラグがある場合は手動同期へ誘導または自動アップロード
+    if (recording.needsCloudUpdate) {
+      print("ローカル変更があるため自動同期をスキップしてアップロードを試みます");
+      // ここで_manualSync()を呼んでも良いが、ユーザー操作を待つ方針なら何もしない
+      return;
+    }
+
     try {
       final tokenService = GetIdtokenService();
       final token = await tokenService.getIdtoken();
@@ -161,28 +173,45 @@ class _ResultScreenState extends State<ResultScreen> {
   }
 
   Future<void> _manualSync() async {
-    setState(() => _isProcessing = true);
-    final isar = Isar.getInstance();
-    if (isar != null) {
-      final recording = await isar.recordings.get(widget.recording.id);
-      if (recording != null) {
-        try {
-            final tokenService = GetIdtokenService();
-            final token = await tokenService.getIdtoken();
-            if (token == null) throw Exception("ログインが必要です");
-            
-            await _repository.syncTranscriptionAndSummary(recording, token);
-            if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('同期完了')));
+    // ネットワークチェック付き実行
+    runWithNetworkCheck(
+      context: context, 
+      action: () async {
+        setState(() => _isProcessing = true);
+        final isar = Isar.getInstance();
+        if (isar != null) {
+          final recording = await isar.recordings.get(widget.recording.id);
+          if (recording != null) {
+            try {
+                final tokenService = GetIdtokenService();
+                final token = await tokenService.getIdtoken();
+                if (token == null) throw Exception("ログインが必要です");
+                
+                // ★統合: クラウド更新が必要な場合(taki機能)はアップロードを実行
+                if (recording.needsCloudUpdate) {
+                   print("変更をアップロード中...");
+                   await _repository.updateRecording(recording, token, syncTranscripts: true);
+                   await isar.writeTxn(() async {
+                     recording.needsCloudUpdate = false;
+                     await isar.recordings.put(recording);
+                   });
+                }
+
+                // ダウンロード同期
+                await _repository.syncTranscriptionAndSummary(recording, token);
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('同期完了')));
+                }
+            } catch (e) {
+              if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('同期エラー: $e')));
+                }
             }
-        } catch (e) {
-          if (mounted) {
-              ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('同期エラー: $e')));
-            }
+          }
         }
+        setState(() => _isProcessing = false);
       }
-    }
-    setState(() => _isProcessing = false);
+    );
   }
 
   // --- S3 Upload Logic ---
@@ -209,11 +238,15 @@ class _ResultScreenState extends State<ResultScreen> {
       );
 
       final recordingId = result['recording_id'];
+      final s3Key = result['s3_key']; // ★takiのs3キー取得ロジックも統合
       
       final isar = Isar.getInstance();
       if (isar != null) {
         await isar.writeTxn(() async {
           widget.recording.remoteId = recordingId;
+          if (s3Key != null) {
+             widget.recording.s3AudioUrl = s3Key;
+          }
           widget.recording.status = 'processing'; 
           await isar.recordings.put(widget.recording);
         });
@@ -247,6 +280,7 @@ class _ResultScreenState extends State<ResultScreen> {
       if (isar != null) {
         await isar.writeTxn(() async {
           recording.transcription = result;
+          recording.needsCloudUpdate = true; // ★AI処理後は同期フラグを立てる
           await isar.recordings.put(recording);
         });
       }
@@ -553,11 +587,10 @@ class _ResultScreenState extends State<ResultScreen> {
                                 onPressed: _togglePlay,
                               ),
                               Expanded(
-                                // ★修正: シークバーを細くスタイリッシュに
                                 child: SliderTheme(
                                   data: SliderTheme.of(context).copyWith(
-                                    trackHeight: 3.0, // トラックの高さ
-                                    thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6.0), // つまみのサイズ
+                                    trackHeight: 3.0, 
+                                    thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6.0), 
                                     overlayShape: const RoundSliderOverlayShape(overlayRadius: 14.0),
                                   ),
                                   child: Slider(
@@ -609,7 +642,6 @@ class _ResultScreenState extends State<ResultScreen> {
                         icon: const Icon(Icons.clear, size: 18),
                         onPressed: () {
                           _searchController.clear();
-                          // 空にして再描画することでハイライト消去
                           setState(() {
                              _previousJumpQuery = null;
                           });

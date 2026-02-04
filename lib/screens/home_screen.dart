@@ -7,6 +7,9 @@ import 'package:amplify_flutter/amplify_flutter.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:voice_app/utils/network_utils.dart';
+// Dioを追加
+import 'package:dio/dio.dart';
 
 import '../models/recording.dart';
 import 'recording_screen.dart';
@@ -40,11 +43,16 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final isar = Isar.getInstance();
     if (isar != null) {
-      _repository = RecordingRepository(isar);
+      // ★修正: Dioを渡してリポジトリを初期化
+      _repository = RecordingRepository(isar: isar, dio: Dio());
+      
       // 初期表示（全件取得）
       _updateRecordingStream();
+      
       // 画面表示時にメタデータ同期を実行
-      _syncMetadataList();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        _syncMetadataList();
+      });
     }
 
     // 検索文字が変わるたびにリストを更新
@@ -66,8 +74,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
     final queryText = _searchController.text.trim();
 
-    // 【重要】型合わせのためのダミー条件 (実質全件)
-    var q = isar.recordings.filter().idGreaterThan(-1);
+    // 削除フラグが立っていないものだけを表示 (taki機能)
+    var q = isar.recordings.filter()
+      .idGreaterThan(-1)
+      .needsCloudDeleteEqualTo(false);
 
     // 1. キーワード検索 (タイトル OR 文字起こし OR 要約)
     if (queryText.isNotEmpty) {
@@ -139,6 +149,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   if (isar != null) {
                     await isar.writeTxn(() async {
                       recording.title = newTitle;
+                      recording.needsCloudUpdate = true; // 同期フラグON
                       await isar.recordings.put(recording);
                     });
                   }
@@ -191,7 +202,13 @@ class _HomeScreenState extends State<HomeScreen> {
       final isar = Isar.getInstance();
       if (isar != null) {
         await isar.writeTxn(() async {
-          await isar.recordings.delete(recording.id);
+          // 論理削除フラグを立てる (taki機能)
+          if (recording.remoteId != null) {
+             recording.needsCloudDelete = true;
+             await isar.recordings.put(recording);
+          } else {
+             await isar.recordings.delete(recording.id);
+          }
         });
 
         if (!mounted) return;
@@ -222,7 +239,7 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
                 title: Text(recording.isFavorite ? 'スターを外す' : 'スターを付ける'),
                 onTap: () async {
-                  Navigator.pop(context); // メニューを閉じる
+                  Navigator.pop(context);
                   
                   final isar = Isar.getInstance();
                   if (isar != null) {
@@ -270,29 +287,35 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _syncMetadataList() async {
     if (_isSyncing) return;
 
-    setState(() => _isSyncing = true);
-    try {
-      final tokenService = GetIdtokenService();
-      final token = await tokenService.getIdtoken();
+    // ネットワークチェック (utils使用)
+    await runWithNetworkCheck(
+      context: context,
+      action: () async {
+        setState(() => _isSyncing = true);
+        try {
+          final tokenService = GetIdtokenService();
+          final token = await tokenService.getIdtoken();
 
-      if (token != null) {
-        await _repository.syncMetadataList(token);
-        print('メタデータ同期完了');
-      } else {
-        print('未ログインのため同期スキップ');
+          if (token != null) {
+            await _repository.syncMetadataList(token);
+            print('メタデータ同期完了');
+          } else {
+            print('未ログインのため同期スキップ');
+          }
+        } catch (e) {
+          print('同期エラー: $e');
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('同期エラー: $e')),
+            );
+          }
+        } finally {
+          if (mounted) {
+            setState(() => _isSyncing = false);
+          }
+        }
       }
-    } catch (e) {
-      print('同期エラー: $e');
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('同期エラー: $e')),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _isSyncing = false);
-      }
-    }
+    );
   }
 
   // ファイルインポート
@@ -492,7 +515,7 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  // ★修正: ステータスバッジの作成
+  // ステータスバッジの作成
   Widget _buildStatusBadge(Recording recording) {
     // ステータス判定
     String text;
@@ -501,10 +524,9 @@ class _HomeScreenState extends State<HomeScreen> {
     bool shouldShow = true;
 
     if (recording.status == 'completed' || (recording.transcription != null && recording.transcription!.length > 10)) {
-      // 完了時は表示しない（スッキリさせるため）
+      // 完了時は表示しない
       return const SizedBox.shrink();
     } else if (recording.status == 'processing') {
-      // ★修正箇所: 待機表示からアクション要求表示へ変更
       text = '未解析'; 
       color = Colors.blue; 
       icon = Icons.touch_app; // タップを促すアイコン
@@ -538,9 +560,7 @@ class _HomeScreenState extends State<HomeScreen> {
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          // ★修正箇所: スピナーを削除し、常にアイコンを表示
           Icon(icon, size: 12, color: color),
-             
           const SizedBox(width: 4),
           Text(text, style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold)),
         ],

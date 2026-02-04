@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:amplify_auth_cognito/amplify_auth_cognito.dart';
 import 'package:amplify_flutter/amplify_flutter.dart';
+import '../services/user_service.dart';
 
 import 'home_screen.dart'; // ログインできたらホームへ
 
@@ -49,6 +50,7 @@ class _LoginScreenState extends State<LoginScreen>{
       );
 
       if (result.isSignedIn) {
+        await UserService().syncUserAttributes();
         _goToHome();
       } else {
         // 多要素認証などが必要な場合の処理
