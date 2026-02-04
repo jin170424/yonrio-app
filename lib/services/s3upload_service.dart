@@ -11,7 +11,10 @@ class S3UploadService {
     try {
       // とりあえずwav固定
       String fileName = audioFile.path.split('/').last;
-      String contentType = 'audio/wav'; 
+      // String contentType = 'audio/wav'; 
+
+      // パスからMIMEタイプを判定
+      final String contentType = _getContentTypeFromPath(audioFile.path);
 
       print('署名付きURL取得開始...');
 
@@ -125,6 +128,37 @@ class S3UploadService {
       print('S3 Upload Failed: ${response.statusCode}');
       print('Response body: ${response.body}');
       throw Exception('S3 Upload Error: ${response.statusCode} ${response.body}');
+    }
+  }
+
+  String _getContentTypeFromPath(String path) {
+    final ext = path.split('.').last.toLowerCase();
+    switch (ext) {
+      case 'mp3': 
+        return 'audio/mpeg';
+      case 'm4a': 
+      case 'mp4':
+        return 'audio/mp4';
+      case 'aac': 
+        return 'audio/aac';
+      case 'wav': 
+        return 'audio/wav';
+
+      case 'jpg':
+      case 'jpeg':
+        return 'image/jpeg';
+      case 'png':
+        return 'image/png';
+      case 'gif':
+        return 'image/gif';
+      case 'webp':
+        return 'image/webp';
+      case 'heic': // iPhone写真
+        return 'image/heic';
+      case 'heif':
+        return 'image/heif';
+      default: 
+        return 'application/octet-stream';
     }
   }
 }

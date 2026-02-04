@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:just_audio/just_audio.dart'; // HEAD由来
 import 'package:isar/isar.dart';
 import 'dart:io';
@@ -51,7 +54,8 @@ class _ResultScreenState extends State<ResultScreen> {
   // 翻訳用言語マップ (HEAD由来)
   final Map<String, String> _supportedLanguages = {
     'en': '英語',
-    'zh': '中国語',
+    'zh': '中国語(简体)',
+    'zh-TW' : '中国語(繁體)',
     'ko': '韓国語',
     'es': 'スペイン語',
     'fr': 'フランス語',
@@ -67,6 +71,11 @@ class _ResultScreenState extends State<ResultScreen> {
 
   bool _isEditingSummary = false;
   final TextEditingController _summaryController = TextEditingController();
+
+  final Map<int, String> _segmentLanguageOverrides = {};
+
+  bool _isUserScrolling = false;
+  Timer? _scrollResumeTimer;
 
   @override
   void initState() {
@@ -97,6 +106,8 @@ class _ResultScreenState extends State<ResultScreen> {
     _audioPlayer.dispose();
     _editController.dispose();
     _summaryController.dispose();
+    _scrollController.dispose();
+    _scrollResumeTimer?.cancel();
     super.dispose();
   }
 
@@ -188,18 +199,20 @@ class _ResultScreenState extends State<ResultScreen> {
     _audioPlayer.positionStream.listen((p) {
       if (mounted) setState(() => _position = p);
         // --- ここから追加したスクロール命令 ---
-        final ms = p.inMilliseconds;
-        final segments = widget.recording.transcripts.toList();
-        segments.sort((a, b) => a.startTimeMs.compareTo(b.startTimeMs));
+        if (!_isUserScrolling){
+          final ms = p.inMilliseconds;
+          final segments = widget.recording.transcripts.toList();
+          segments.sort((a, b) => a.startTimeMs.compareTo(b.startTimeMs));
 
-        int activeIndex = segments.lastIndexWhere((s) => ms >= s.startTimeMs);
+          int activeIndex = segments.lastIndexWhere((s) => ms >= s.startTimeMs);
 
-        if (activeIndex != -1 && _scrollController.hasClients) {
-          _scrollController.animateTo(
-            activeIndex * 120.0, 
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeInOut,
-          );
+          if (activeIndex != -1 && _scrollController.hasClients) {
+            _scrollController.animateTo(
+              activeIndex * 120.0, 
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeInOut,
+            );
+          }
         }
         // --- ここまで ---
     });
@@ -557,7 +570,7 @@ Future<void> s3Upload(String title) async {
     }
   }
 
-  Future<void> _pollForTranslation(String targetLang) async {
+  Future<void> _pollForTranslation(String targetLang, {bool updateGlobalUI = true}) async {
     setState(() {
       // _isTranslating = true;
     });
@@ -595,11 +608,13 @@ Future<void> s3Upload(String title) async {
             ScaffoldMessenger.of(context).showSnackBar(
               SnackBar(content: Text('翻訳が完了しました！')),
             );
+            if (updateGlobalUI) {
+              setState(() {
+                _currentDisplayLanguage = targetLang; // 自動で切り替え
+                _currentMode = DisplayMode.transcription;
+              });
+            }
             
-            setState(() {
-              _currentDisplayLanguage = targetLang; // 自動で切り替え
-              _currentMode = DisplayMode.transcription;
-            });
             return; // 終了
           }
         }
@@ -663,7 +678,7 @@ Future<void> s3Upload(String title) async {
               },
               child: const Padding(
                 padding: EdgeInsets.symmetric(vertical: 8.0),
-                child: Text('原文', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                child: Text('原文を表示', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
               ),
             ),
             const Divider(),
@@ -675,7 +690,7 @@ Future<void> s3Upload(String title) async {
                 },
                 child: Padding(
                   padding: const EdgeInsets.symmetric(vertical: 8.0),
-                  child: Text(entry.key, style: const TextStyle(fontSize: 16)),
+                  child: Text(entry.value, style: const TextStyle(fontSize: 16)),
                 )
               );
             }),
@@ -683,6 +698,82 @@ Future<void> s3Upload(String title) async {
         );
       },
     );
+  }
+
+  Future<void> _showSegmentTranslationDialog(int index) async {
+    showDialog(
+      context: context,
+      builder:(context) {
+        return SimpleDialog(
+          title: const Text('言語を選択'),
+          children: [
+            SimpleDialogOption(
+              onPressed: () {
+                Navigator.pop(context);
+                _updateSegmentLanguage(index, 'original');
+              },
+              child: const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8.0),
+                child: Text('原文を表示', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold))
+              ),
+            ),
+            const Divider(),
+            ..._supportedLanguages.entries.map((entry) {
+              return SimpleDialogOption(
+                onPressed: () {
+                  Navigator.pop(context);
+                  _updateSegmentLanguage(index, entry.key, langName: entry.value);
+                },
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8.0),
+                  child: Text(entry.value, style: const TextStyle(fontSize:16)),
+                )
+              );
+            }),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _updateSegmentLanguage(int index, String langCode, {String? langName}) async {
+    if (langCode == 'original') {
+      setState(() {
+        _segmentLanguageOverrides.remove(index);
+      });
+      return;
+    }
+
+    // データがあるかチェック
+    await widget.recording.transcripts.load();
+    final hasCache = widget.recording.transcripts.any(
+      (s) => s.translations?.any((t) => t.langCode == langCode) ?? false
+    );
+
+    if (hasCache) {
+      setState(() {
+        _segmentLanguageOverrides[index] = langCode;
+      });
+    } else {
+      try {
+        final token = await GetIdtokenService().getIdtoken();
+        if (token == null) return;
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${langName ?? langCode} のデータを取得中...')));
+        }
+
+        await _repository.requestTranslation(widget.recording.remoteId!, langCode, token);
+        await _pollForTranslation(langCode, updateGlobalUI: false);
+        if (mounted) {
+          setState(() {
+            _segmentLanguageOverrides[index] = langCode;
+          });
+        }
+      } catch (e) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('エラー: $e')));
+      }
+    }
   }
 
   Future<void> _handleTranslationRequest(String langCode, String langName) async {
@@ -904,18 +995,43 @@ Future<void> s3Upload(String title) async {
 
     final bool isTranslateMode = _currentDisplayLanguage != 'original';
 
-    return ListView.builder(
+    return NotificationListener<UserScrollNotification>(
+      onNotification: (notification) {
+        // ユーザーが操作開始したとき
+        if (notification.direction != ScrollDirection.idle){
+          _scrollResumeTimer?.cancel(); // タイマーリセット
+          if (!_isUserScrolling) {
+            _isUserScrolling = true; // フラグ(自動スクロール停止)
+          }
+        }
+        // ユーザーの操作終了、スクロールが止まった時
+        else {
+          _scrollResumeTimer?.cancel();
+          // 5秒後にフラグオフ、自動スクロール開始
+          _scrollResumeTimer = Timer(const Duration(seconds: 5), () {
+            if (mounted) {
+              setState(() {
+                _isUserScrolling = false;
+              });
+            }
+          });
+        }
+        return false;
+      },
+      child: ListView.builder(
       controller: _scrollController,//コントローラ追加
       itemCount: segments.length,
       padding: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
       itemBuilder: (context, index) {
         final segment = segments[index];
         final isEditing = _editingIndex == index;
+        final String effectiveLang = _segmentLanguageOverrides[index] ?? _currentDisplayLanguage;
+        final bool isTranslateMode = effectiveLang != 'original';
         String displayText = segment.text;
         bool isCurrentTranslationAvailable = false;
         if (isTranslateMode){
           final translation = segment.translations?.firstWhere(
-            (t) => t.langCode == _currentDisplayLanguage,
+            (t) => t.langCode == effectiveLang,
             orElse: () => TranslationData(),
           );
           if (translation?.text != null){
@@ -929,7 +1045,7 @@ Future<void> s3Upload(String title) async {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Padding(
-                padding: const EdgeInsets.only(left: 8.0, bottom: 4.0),
+                padding: const EdgeInsets.only(left: 8.0, bottom: 0),
                 child: Row(
                   children: [
                     Text(
@@ -956,6 +1072,21 @@ Future<void> s3Upload(String title) async {
                       onPressed: () => _playFromTimestamp(segment.startTimeMs),
                     ),
                     // ================================
+
+                    const SizedBox(width: 2),
+
+                    IconButton(
+                      icon: Icon(
+                        Icons.translate, 
+                        size: 18, 
+                        // 個別設定が効いている時は色を変えて分かりやすくする
+                        color: _segmentLanguageOverrides.containsKey(index) ? Colors.indigo : Colors.grey.shade400
+                      ),
+                      constraints: const BoxConstraints(),
+                      padding: EdgeInsets.zero,
+                      tooltip: "この行を翻訳",
+                      onPressed: () => _showSegmentTranslationDialog(index),
+                    ),
 
                     const Spacer(),
 
@@ -1037,7 +1168,7 @@ Future<void> s3Upload(String title) async {
                     ],
                   )
                 : Text(
-                  segment.text,
+                  displayText,
                   style: const TextStyle(fontSize: 15, height: 1.4),
                 ),
               ),
@@ -1045,6 +1176,7 @@ Future<void> s3Upload(String title) async {
           ),
         );
       },
+    ),
     );
   }
 
