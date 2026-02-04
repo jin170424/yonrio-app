@@ -10,7 +10,8 @@ class Recording {
   Id id = Isar.autoIncrement;
 
   // DynamoDBのid(UUID)
-  @Index(unique: true, replace: true)
+  // ★修正: ローカル保存時(null)の重複を許容するため、ユニーク制約を外しました
+  @Index()
   String? remoteId;
 
   late String ownerName;
@@ -46,7 +47,6 @@ class Recording {
   String? sourceOriginalId;
 
   // ステータス (processing, completed, errorなど)
-  // 安全のためNullableに統一
   String? status;
 
   // 文字起こし結果 (全文)
@@ -57,13 +57,13 @@ class Recording {
   @Index(type: IndexType.value, caseSensitive: false)
   String? summary;
 
-  // お気に入りフラグ (HEAD由来)
+  // お気に入りフラグ
   bool isFavorite = false;
 
   // 他のユーザーへの共有状況
   List<SharedUser>? sharedWith;
 
-  // クラウド同期用のフラグ (taki由来)
+  // クラウド同期用のフラグ
   bool needsCloudUpdate = false;
   bool needsCloudDelete = false;
   

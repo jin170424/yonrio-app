@@ -74,7 +74,7 @@ class _ResultScreenState extends State<ResultScreen> {
     super.initState();
     final isar = Isar.getInstance(); 
     if (isar != null) {
-      // ★修正: Dioを渡して初期化
+      // Dioを渡して初期化
       _repository = RecordingRepository(isar: isar, dio: Dio());
       _recordingStream = isar.recordings.watchObject(widget.recording.id, fireImmediately: true);
     }
@@ -154,10 +154,9 @@ class _ResultScreenState extends State<ResultScreen> {
     final recording = await isar.recordings.get(widget.recording.id);
     if (recording == null || recording.remoteId == null || recording.status == 'pending') return;
 
-    // ★統合: 同期フラグがある場合は手動同期へ誘導または自動アップロード
+    // 同期フラグがある場合は手動同期へ誘導または自動アップロード
     if (recording.needsCloudUpdate) {
       print("ローカル変更があるため自動同期をスキップしてアップロードを試みます");
-      // ここで_manualSync()を呼んでも良いが、ユーザー操作を待つ方針なら何もしない
       return;
     }
 
@@ -187,7 +186,7 @@ class _ResultScreenState extends State<ResultScreen> {
                 final token = await tokenService.getIdtoken();
                 if (token == null) throw Exception("ログインが必要です");
                 
-                // ★統合: クラウド更新が必要な場合(taki機能)はアップロードを実行
+                // クラウド更新が必要な場合(taki機能)はアップロードを実行
                 if (recording.needsCloudUpdate) {
                    print("変更をアップロード中...");
                    await _repository.updateRecording(recording, token, syncTranscripts: true);
@@ -238,7 +237,7 @@ class _ResultScreenState extends State<ResultScreen> {
       );
 
       final recordingId = result['recording_id'];
-      final s3Key = result['s3_key']; // ★takiのs3キー取得ロジックも統合
+      final s3Key = result['s3_key'];
       
       final isar = Isar.getInstance();
       if (isar != null) {
@@ -280,7 +279,7 @@ class _ResultScreenState extends State<ResultScreen> {
       if (isar != null) {
         await isar.writeTxn(() async {
           recording.transcription = result;
-          recording.needsCloudUpdate = true; // ★AI処理後は同期フラグを立てる
+          recording.needsCloudUpdate = true; // AI処理後は同期フラグを立てる
           await isar.recordings.put(recording);
         });
       }
@@ -370,7 +369,7 @@ class _ResultScreenState extends State<ResultScreen> {
     );
   }
 
-  // ★追加: コンパクトなモード切り替えボタンのパーツ
+  // コンパクトなモード切り替えボタン
   Widget _buildModeBtn(String label, DisplayMode mode) {
     final bool isSelected = _currentMode == mode;
     return GestureDetector(
@@ -447,15 +446,41 @@ class _ResultScreenState extends State<ResultScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // ★修正箇所: 発言者名の横に再生ボタンを追加
               Padding(
                 padding: const EdgeInsets.only(left: 8.0, bottom: 4.0),
-                child: Text(
-                  segment.speaker,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 12,
-                    color:Colors.grey,
-                  ),
+                child: Row(
+                  children: [
+                    Text(
+                      segment.speaker,
+                      style: const TextStyle(
+                        fontWeight: FontWeight.bold,
+                        fontSize: 12,
+                        color:Colors.grey,
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    // 再生ボタン (taki機能)
+                    if (!_isImage) // 音声ファイルの時のみ表示
+                      InkWell(
+                        onTap: () async {
+                          // その位置までシークして再生
+                          await _audioPlayer.seek(Duration(milliseconds: segment.startTimeMs));
+                          if (!_isPlaying) {
+                            _audioPlayer.play();
+                          }
+                        },
+                        borderRadius: BorderRadius.circular(12),
+                        child: Container(
+                          padding: const EdgeInsets.all(2),
+                          decoration: BoxDecoration(
+                            color: Colors.blue.withOpacity(0.1),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(Icons.play_arrow, size: 16, color: Colors.blueAccent),
+                        ),
+                      ),
+                  ],
                 ),
               ),
               Container(

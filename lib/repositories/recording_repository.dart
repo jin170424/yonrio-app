@@ -21,7 +21,6 @@ class RecordingRepository {
   ) async {
     if (targetRecording.remoteId == null) {
       throw Exception("remoteIdが設定されていないため、データ取得できません");
-      // TODO: s3にアップロードする処理
     }
 
     final String filenameParam = "${targetRecording.remoteId}.json";
@@ -51,8 +50,24 @@ class RecordingRepository {
         throw Exception('S3 Download Error (${s3Response.statusCode}): ファイルが見つかりません');
       }
 
-      // 日本語文字化け対策
-      final Map<String, dynamic> jsonContent = jsonDecode(utf8.decode(s3Response.bodyBytes));
+      // ★修正: JSONの型チェックを行うロジックを追加
+      final dynamic decodedJson = jsonDecode(utf8.decode(s3Response.bodyBytes));
+      Map<String, dynamic> jsonContent;
+
+      if (decodedJson is List) {
+        // 配列で返ってきた場合、それをspeakersリストとして扱うよう整形
+        print("警告: JSONがList形式でした。Mapに変換して処理します。");
+        jsonContent = {
+          'summary': '',
+          'full_transcript': '',
+          'speakers': decodedJson,
+        };
+      } else if (decodedJson is Map<String, dynamic>) {
+        // Mapならそのまま使う
+        jsonContent = decodedJson;
+      } else {
+        throw Exception('予期せぬJSON形式です: ${decodedJson.runtimeType}');
+      }
 
       // isar更新
       await isar.writeTxn(() async {
