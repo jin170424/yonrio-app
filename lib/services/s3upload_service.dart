@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 import 'package:http/http.dart' as http;
+import 'package:path/path.dart' as p;
 
 class S3UploadService {
   final String _lambdaApiUrl = 'https://lyykfzqqz7.execute-api.us-east-1.amazonaws.com/dev/presigned';
@@ -132,7 +133,9 @@ class S3UploadService {
   }
 
   String _getContentTypeFromPath(String path) {
-    final ext = path.split('.').last.toLowerCase();
+    print("DEBUG: Checking path: $path");
+    final ext = p.extension(path).toLowerCase().replaceFirst('.', '');
+    print('Extracted extension: $ext');
     switch (ext) {
       case 'mp3': 
         return 'audio/mpeg';
@@ -158,6 +161,7 @@ class S3UploadService {
       case 'heif':
         return 'image/heif';
       default: 
+        if (path.toLowerCase().endsWith('.m4a')) return 'audio/mp4';
         return 'application/octet-stream';
     }
   }

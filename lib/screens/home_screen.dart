@@ -14,6 +14,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:voice_app/models/transcript_segment.dart';
 import 'package:voice_app/services/user_service.dart'; 
 import 'package:voice_app/utils/network_utils.dart';
+import 'package:path/path.dart' as p;
 
 import '../models/recording.dart';
 import 'recording_screen.dart';
@@ -319,15 +320,23 @@ class _HomeScreenState extends State<HomeScreen> {
   // --- 共通機能 ---
 
   Future<void> _importFile() async {
-    try {
-      final result = await FilePicker.platform.pickFiles(
-        type: FileType.custom,
-        allowedExtensions: ['mp3', 'm4a', 'wav', 'aac'], 
-      );
+    // try {
+    //   final result = await FilePicker.platform.pickFiles(
+    //     type: FileType.custom,
+    //     allowedExtensions: ['mp3', 'm4a', 'wav', 'aac'], 
+    //   );
 
-      if (result != null && result.files.single.path != null) {
-        await _processImport(result.files.single.path!, result.files.single.name);
-      }
+    //   if (result != null && result.files.single.path != null) {
+    //     await _processImport(result.files.single.path!, result.files.single.name);
+    //   }
+    try {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.audio, // customではなくaudioに変更
+    );
+
+    if (result != null && result.files.single.path != null) {
+      await _processImport(result.files.single.path!, result.files.single.name);
+    }
     } catch (e) {
       print('インポートエラー');
     }
@@ -350,7 +359,14 @@ class _HomeScreenState extends State<HomeScreen> {
 
         // アプリ内の安全な場所にコピーする
         final appDir = await getApplicationDocumentsDirectory();
-        final newPath = '${appDir.path}/imported_$fileName';
+        // final newPath = '${appDir.path}/imported_$fileName';
+        String ext = p.extension(originalPath);
+        String safeFileName = fileName;
+        if (!safeFileName.toLowerCase().endsWith(ext.toLowerCase())) {
+           // 含まれていなければ、お尻にくっつける
+          safeFileName = '$safeFileName$ext';
+        }
+        final newPath = '${appDir.path}/imported_$safeFileName';
         await File(originalPath).copy(newPath);
 
         // データベースに登録
