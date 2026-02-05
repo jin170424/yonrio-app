@@ -1,8 +1,12 @@
+import 'dart:async';
+
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
 import 'package:just_audio/just_audio.dart'; // HEAD由来
 import 'package:isar/isar.dart';
 import 'dart:io';
+import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 
 // Main由来
 import 'package:internet_connection_checker_plus/internet_connection_checker_plus.dart';
@@ -33,7 +37,9 @@ class _ResultScreenState extends State<ResultScreen> {
   late final RecordingRepository _repository;
 
   // 再生スクロールのためのコントローラー
-  final ScrollController _scrollController = ScrollController();
+  // final ScrollController _scrollController = ScrollController();
+  final ItemScrollController _itemScrollController = ItemScrollController();
+  final ItemPositionsListener _itemPositionsListener = ItemPositionsListener.create();
   // Stream & UI State (Main由来)
   Stream<Recording?>? _recordingStream;
   DisplayMode _currentMode = DisplayMode.transcription;
@@ -49,22 +55,31 @@ class _ResultScreenState extends State<ResultScreen> {
   bool _isImage = false;
   
   // 翻訳用言語マップ (HEAD由来)
-  final Map<String, String> _targetLanguages = {
-    '英語': 'English',
-    '中国語': 'Simplified Chinese',
-    '韓国語': 'Korean',
-    'スペイン語': 'Spanish',
-    'フランス語': 'French',
-    'ドイツ語': 'German',
+  final Map<String, String> _supportedLanguages = {
+    'en': '英語',
+    'zh': '中国語(简体)',
+    'zh-TW' : '中国語(繁體)',
+    'ko': '韓国語',
+    'es': 'スペイン語',
+    'fr': 'フランス語',
+    'de': 'ドイツ語',
   };
   bool _isUploading = false;
   String _uploadStatusText = '保存';
+
+  String _currentDisplayLanguage = 'original';
 
   int? _editingIndex;
   final TextEditingController _editController = TextEditingController();
 
   bool _isEditingSummary = false;
   final TextEditingController _summaryController = TextEditingController();
+
+  final Map<int, String> _segmentLanguageOverrides = {};
+
+  bool _isUserScrolling = false;
+  Timer? _scrollResumeTimer;
+  int _lastAutoScrolledIndex = -1;
 
   @override
   void initState() {
@@ -95,6 +110,8 @@ class _ResultScreenState extends State<ResultScreen> {
     _audioPlayer.dispose();
     _editController.dispose();
     _summaryController.dispose();
+    // _scrollController.dispose();
+    _scrollResumeTimer?.cancel();
     super.dispose();
   }
 
@@ -186,18 +203,29 @@ class _ResultScreenState extends State<ResultScreen> {
     _audioPlayer.positionStream.listen((p) {
       if (mounted) setState(() => _position = p);
         // --- ここから追加したスクロール命令 ---
-        final ms = p.inMilliseconds;
-        final segments = widget.recording.transcripts.toList();
-        segments.sort((a, b) => a.startTimeMs.compareTo(b.startTimeMs));
+        if (!_isUserScrolling){
+          final ms = p.inMilliseconds;
+          final segments = widget.recording.transcripts.toList();
+          segments.sort((a, b) => a.startTimeMs.compareTo(b.startTimeMs));
 
-        int activeIndex = segments.lastIndexWhere((s) => ms >= s.startTimeMs);
+          int activeIndex = segments.lastIndexWhere((s) => ms >= s.startTimeMs);
 
-        if (activeIndex != -1 && _scrollController.hasClients) {
-          _scrollController.animateTo(
-            activeIndex * 120.0, 
-            duration: const Duration(milliseconds: 300),
-            curve: Curves.easeInOut,
-          );
+          // if (activeIndex != -1 && _scrollController.hasClients) {
+          if (activeIndex != -1 && activeIndex != _lastAutoScrolledIndex) {
+            _lastAutoScrolledIndex = activeIndex;
+          //   if (_scrollController.hasClients) {
+          //     _scrollController.animateTo(
+          //       activeIndex * 120.0, 
+          //       duration: const Duration(milliseconds: 300),
+          //       curve: Curves.easeInOut,
+          //     );
+            _itemScrollController.scrollTo(
+              index: activeIndex, // 何番目の行か指定
+              duration: const Duration(milliseconds: 300),
+              curve: Curves.easeInOut,
+              alignment: 0.1,
+            );
+          }
         }
         // --- ここまで ---
     });
@@ -331,73 +359,6 @@ class _ResultScreenState extends State<ResultScreen> {
       }
     );
   }
-
-
-  // void _loadLocalData() {
-  //   setState(() {
-  //     final summary = widget.recording.summary;
-  //     final transcription = widget.recording.transcription;
-  //     if (summary != null && summary.isNotEmpty) {
-  //       // 要約がある場合
-  //       _summaryText = summary;
-  //     } else {
-  //       _summaryText = "まだ要約がありません";
-  //       // TODO : 要約同期処理
-  //     }
-  //     if (transcription != null && transcription.isNotEmpty){
-  //       _transcriptionText = transcription;
-  //     } else {
-  //       _transcriptionText = "まだ文字起こしがありません";
-  //       // TODO : 文字起こし同期処理
-  //     }
-  //     _displayText = _transcriptionText;
-  //   });
-  // }
-
-  // // クラウドからデータ取得
-  // Future<void> _syncFromCloud({bool silent = false}) async {
-  //   if (widget.recording.remoteId == null) return;
-
-  //   if (!silent) setState(() => _isLoading = true);
-
-  //   try {
-  //     final tokenService = GetIdtokenService();
-  //     final token = await tokenService.getIdtoken();
-
-  //     if (token == null) {
-  //       if (!silent) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('ログインが必要です')));
-  //       return;
-  //     }
-
-  //     // リポジトリ経由で同期実行
-  //     // リポジトリ内でIsarへの保存(put)が行われる
-  //     await _repository.syncTranscriptionAndSummary(widget.recording, token);
-
-  //     // 成功したら画面のテキストを更新
-  //     _loadLocalData();
-
-  //     if (!silent) {
-  //       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('クラウドと同期しました')));
-  //     }
-  //   } catch (e) {
-  //     print("同期エラー: $e");
-  //     // silent実行時はユーザーにエラーを見せない（または控えめに表示）
-  //     if (!silent) {
-  //       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('同期失敗: まだ処理中かもしれません')));
-  //     }
-  //   } finally {
-  //     if (!silent) setState(() => _isLoading = false);
-  //   }
-  // }
-
-  // Future<void> _runGeminiTask(Function task) async {
-  //   setState(() => _isLoading = true);
-  //   final result = await task();
-  //   setState(() {
-  //     _transcriptionText = result;
-  //     _isLoading = false;
-  //   });
-  // }
 
 Future<void> s3Upload(String title) async {
   setState(() {
@@ -535,6 +496,89 @@ Future<void> s3Upload(String title) async {
 
   }
 
+  Future<void> _handleTranslation(String targetLang) async {
+    final tokenService = GetIdtokenService();
+    final token = await tokenService.getIdtoken();
+    if (token == null) return;
+
+    try {
+      await _repository.requestTranslation(widget.recording.remoteId!, targetLang, token);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('翻訳を開始しました')),
+      );
+
+      await _pollForTranslation(targetLang);
+    } catch (e) {
+      print('翻訳エラー: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('翻訳エラー: $e')),
+      );
+    }
+  }
+
+  Future<void> _pollForTranslation(String targetLang, {bool updateGlobalUI = true}) async {
+    setState(() {
+      // _isTranslating = true;
+    });
+
+    const int maxAttempts = 30; 
+    const Duration interval = Duration(seconds: 5);
+
+    for (int i = 0; i < maxAttempts; i++) {
+      try {
+        print("翻訳ポーリング試行: ${i + 1}/$maxAttempts");
+
+        final tokenService = GetIdtokenService();
+        final token = await tokenService.getIdtoken();
+        
+        // 最新データを取得 (ここでIsarのデータがローカルメモリに乗る)
+        final latestRecording = await isar.recordings.get(widget.recording.id);
+
+        if (token != null && latestRecording != null) {
+          // 同期処理を実行 (S3から最新JSONをダウンロードしてIsarへ)
+          await _repository.syncTranscriptionAndSummary(latestRecording, token);
+
+          // 判定ロジック: 対象言語が含まれているかチェック
+          // syncTranscriptionAndSummary内でIsar更新済みなので、再度getする必要は本来ないが、
+          // 念のためIsarLinkをロードするか、最新の状態を確認
+          await latestRecording.transcripts.load();
+          
+          final hasTranslation = latestRecording.transcripts.any(
+            (s) => s.translations?.any((tr) => tr.langCode == targetLang) ?? false
+          );
+          
+          if (hasTranslation) {
+            print("翻訳データ受信完了: $targetLang");
+            if (!mounted) return;
+
+            ScaffoldMessenger.of(context).showSnackBar(
+              SnackBar(content: Text('翻訳が完了しました！')),
+            );
+            if (updateGlobalUI) {
+              setState(() {
+                _currentDisplayLanguage = targetLang; // 自動で切り替え
+                _currentMode = DisplayMode.transcription;
+              });
+            }
+            
+            return; // 終了
+          }
+        }
+      } catch (e) {
+        print('翻訳ポーリング中のエラー(続行): $e');
+      }
+      
+      await Future.delayed(interval);
+    }
+
+    // タイムアウト
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('翻訳処理に時間がかかっています。しばらくしてから再度確認してください。')),
+      );
+    }
+  }
+
   // --- Gemini / Translation Logic (HEAD & Main統合) ---
   Future<void> _runGeminiTask(Future<String> Function() task, Recording recording) async {
     setState(() => _isLoading = true);
@@ -559,40 +603,167 @@ Future<void> s3Upload(String title) async {
   }
 
   Future<void> _showTranslationDialog(Recording recording) async {
-    final currentText = recording.transcription ?? "";
-    if (currentText.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('翻訳するテキストがありません')),
-      );
-      return;
-    }
+    // final currentText = recording.transcription ?? "";
+    // if (currentText.isEmpty) {
+    //   ScaffoldMessenger.of(context).showSnackBar(
+    //     const SnackBar(content: Text('翻訳するテキストがありません')),
+    //   );
+    //   return;
+    // }
 
     showDialog(
       context: context,
       builder: (context) {
         return SimpleDialog(
           title: const Text('翻訳先の言語を選択'),
-          children: _targetLanguages.entries.map((entry) {
-            return SimpleDialogOption(
+          children: [
+            SimpleDialogOption(
               onPressed: () {
                 Navigator.pop(context);
-                _runGeminiTask(
-                  () => _geminiService.translateText(
-                    currentText, 
-                    targetLang: entry.value,
-                  ),
-                  recording
-                );
+                _handleTranslationRequest('original', '原文');
               },
-              child: Padding(
-                padding: const EdgeInsets.symmetric(vertical: 8.0),
-                child: Text(entry.key, style: const TextStyle(fontSize: 16)),
+              child: const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8.0),
+                child: Text('原文を表示', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
               ),
-            );
-          }).toList(),
+            ),
+            const Divider(),
+            ..._supportedLanguages.entries.map((entry) {
+              return SimpleDialogOption(
+                onPressed: () {
+                  Navigator.pop(context);
+                  _handleTranslationRequest(entry.key, entry.value);
+                },
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8.0),
+                  child: Text(entry.value, style: const TextStyle(fontSize: 16)),
+                )
+              );
+            }),
+          ],
         );
       },
     );
+  }
+
+  Future<void> _showSegmentTranslationDialog(int index) async {
+    showDialog(
+      context: context,
+      builder:(context) {
+        return SimpleDialog(
+          title: const Text('言語を選択'),
+          children: [
+            SimpleDialogOption(
+              onPressed: () {
+                Navigator.pop(context);
+                _updateSegmentLanguage(index, 'original');
+              },
+              child: const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8.0),
+                child: Text('原文を表示', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold))
+              ),
+            ),
+            const Divider(),
+            ..._supportedLanguages.entries.map((entry) {
+              return SimpleDialogOption(
+                onPressed: () {
+                  Navigator.pop(context);
+                  _updateSegmentLanguage(index, entry.key, langName: entry.value);
+                },
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 8.0),
+                  child: Text(entry.value, style: const TextStyle(fontSize:16)),
+                )
+              );
+            }),
+          ],
+        );
+      },
+    );
+  }
+
+  Future<void> _updateSegmentLanguage(int index, String langCode, {String? langName}) async {
+    if (langCode == 'original') {
+      setState(() {
+        _segmentLanguageOverrides.remove(index);
+      });
+      return;
+    }
+
+    // データがあるかチェック
+    await widget.recording.transcripts.load();
+    final hasCache = widget.recording.transcripts.any(
+      (s) => s.translations?.any((t) => t.langCode == langCode) ?? false
+    );
+
+    if (hasCache) {
+      setState(() {
+        _segmentLanguageOverrides[index] = langCode;
+      });
+    } else {
+      try {
+        final token = await GetIdtokenService().getIdtoken();
+        if (token == null) return;
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('${langName ?? langCode} のデータを取得中...')));
+        }
+
+        await _repository.requestTranslation(widget.recording.remoteId!, langCode, token);
+        await _pollForTranslation(langCode, updateGlobalUI: false);
+        if (mounted) {
+          setState(() {
+            _segmentLanguageOverrides[index] = langCode;
+          });
+        }
+      } catch (e) {
+        if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('エラー: $e')));
+      }
+    }
+  }
+
+  Future<void> _handleTranslationRequest(String langCode, String langName) async {
+    if (langCode == 'original') {
+      setState(() => _currentDisplayLanguage = 'original');
+      return;
+    }
+    
+    // すでに翻訳データがあるかチェック
+    await widget.recording.transcripts.load();
+    final hasCache = widget.recording.transcripts.any(
+      (s) => s.translations?.any((t) => t.langCode == langCode) ?? false
+    );
+
+    if (hasCache) {
+      // すでにある場合は切り替えだけ
+      setState(() {
+        _currentDisplayLanguage = langCode;
+        _currentMode = DisplayMode.transcription;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$langName に切り替えました')));
+      return;
+    }
+
+    // なければサーバーにリクエスト
+    try {
+      final token = await GetIdtokenService().getIdtoken();
+      if (token == null) return;
+      if (widget.recording.remoteId == null) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('先にクラウドへ保存してください')));
+        return;
+      }
+
+      await _repository.requestTranslation(widget.recording.remoteId!, langCode, token);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$langName への翻訳を開始しました...')));
+      }
+
+      await _pollForTranslation(langCode);
+
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('翻訳リクエストエラー: $e')));
+    }
   }
 
   Future<void> _saveTranscriptSegment(int index, TranscriptSegment segment, Recording recording) async {
@@ -764,33 +935,65 @@ Future<void> s3Upload(String title) async {
       }
 
       return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            const Icon(Icons.cloud_off, size:48, color:Colors.grey),
-            const SizedBox(height: 16),
-            const Text("文字起こしデータがありません"),
-            const SizedBox(height: 8),
-            const Text("アップロードしてください", style:TextStyle(fontSize: 12, color:Colors.grey)),
-          ],
-        ),
+        child: Text("文字起こしデータがありません"),
       );
     }
 
-    return ListView.builder(
-      controller: _scrollController,//コントローラ追加
-      itemCount: segments.length,
-      padding: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
-      itemBuilder: (context, index) {
-        final segment = segments[index];
-        final isEditing = _editingIndex == index;
+    final bool isTranslateMode = _currentDisplayLanguage != 'original';
+
+    return NotificationListener<UserScrollNotification>(
+      onNotification: (notification) {
+        // ユーザーが操作開始したとき
+        if (notification.direction != ScrollDirection.idle){
+          _scrollResumeTimer?.cancel(); // タイマーリセット
+          if (!_isUserScrolling) {
+            _isUserScrolling = true; // フラグ(自動スクロール停止)
+          }
+        }
+        // ユーザーの操作終了、スクロールが止まった時
+        else {
+          _scrollResumeTimer?.cancel();
+          // 5秒後にフラグオフ、自動スクロール開始
+          _scrollResumeTimer = Timer(const Duration(seconds: 5), () {
+            if (mounted) {
+              setState(() {
+                _isUserScrolling = false;
+                _lastAutoScrolledIndex = -1;
+              });
+            }
+          });
+        }
+        return false;
+      },
+      child: ScrollablePositionedList.builder(
+        itemScrollController: _itemScrollController, // コントローラーセット
+        itemPositionsListener: _itemPositionsListener, // リスナーセット
+        itemCount: segments.length,
+        padding: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
+        itemBuilder: (context, index) {
+          final segment = segments[index];
+          final isEditing = _editingIndex == index;
+          final String effectiveLang = _segmentLanguageOverrides[index] ?? _currentDisplayLanguage;
+          final bool isTranslateMode = effectiveLang != 'original';
+          String displayText = segment.text;
+          bool isCurrentTranslationAvailable = false;
+          if (isTranslateMode){
+            final translation = segment.translations?.firstWhere(
+              (t) => t.langCode == effectiveLang,
+              orElse: () => TranslationData(),
+            );
+            if (translation?.text != null){
+              displayText = translation!.text!;
+              isCurrentTranslationAvailable = true;
+            }
+          }
         return Padding(
           padding: const EdgeInsets.symmetric(vertical: 8.0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Padding(
-                padding: const EdgeInsets.only(left: 8.0, bottom: 4.0),
+                padding: const EdgeInsets.only(left: 8.0, bottom: 0),
                 child: Row(
                   children: [
                     Text(
@@ -818,9 +1021,24 @@ Future<void> s3Upload(String title) async {
                     ),
                     // ================================
 
+                    const SizedBox(width: 2),
+
+                    IconButton(
+                      icon: Icon(
+                        Icons.translate, 
+                        size: 18, 
+                        // 個別設定が効いている時は色を変えて分かりやすくする
+                        color: _segmentLanguageOverrides.containsKey(index) ? Colors.indigo : Colors.grey.shade400
+                      ),
+                      constraints: const BoxConstraints(),
+                      padding: EdgeInsets.zero,
+                      tooltip: "この行を翻訳",
+                      onPressed: () => _showSegmentTranslationDialog(index),
+                    ),
+
                     const Spacer(),
 
-                    if(!isEditing && !_isProcessing) 
+                    if(!isEditing && !_isProcessing && !isTranslateMode) 
                       GestureDetector(
                         onTap: () {
                           setState(() {
@@ -898,7 +1116,7 @@ Future<void> s3Upload(String title) async {
                     ],
                   )
                 : Text(
-                  segment.text,
+                  displayText,
                   style: const TextStyle(fontSize: 15, height: 1.4),
                 ),
               ),
@@ -906,6 +1124,7 @@ Future<void> s3Upload(String title) async {
           ),
         );
       },
+    ),
     );
   }
 
@@ -1190,7 +1409,10 @@ Future<void> s3Upload(String title) async {
                     ElevatedButton.icon(
                       onPressed: _isLoading ? null : () => _showTranslationDialog(recording),
                       icon: const Icon(Icons.translate),
-                      label: const Text('翻訳'),
+                      label: Text(_currentDisplayLanguage == 'original' ? '翻訳' :'翻訳中'),
+                      style: _currentDisplayLanguage != 'original' 
+                      ? ElevatedButton.styleFrom(backgroundColor: Colors.indigo.shade100) 
+                      : null,
                     ),
                     
                     // ローカル処理 (HEADの機能: 必要な場合)

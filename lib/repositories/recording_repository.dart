@@ -52,13 +52,31 @@ class RecordingRepository {
       }
 
       // 日本語文字化け対策
-      final Map<String, dynamic> jsonContent = jsonDecode(utf8.decode(s3Response.bodyBytes));
+      // final Map<String, dynamic> jsonContent = jsonDecode(utf8.decode(s3Response.bodyBytes));
+      final dynamic decoded = jsonDecode(utf8.decode(s3Response.bodyBytes));
+
+      Map<String, dynamic> jsonContent;
+      List<dynamic>? speakersList;
+
+      if (decoded is List) {
+        print("古い形式(List)のJSONを検出しました。互換モードで処理します。");
+        jsonContent = {}; // 空のマップを入れておく
+        speakersList = decoded;
+        
+      } else if (decoded is Map<String, dynamic>) {
+        jsonContent = decoded;
+        speakersList = jsonContent['speakers'] as List<dynamic>?;
+      } else {
+        throw Exception("不明なJSON形式です: ${decoded.runtimeType}");
+      }
 
       // isar更新
       await isar.writeTxn(() async {
         // 親データ
-        targetRecording.summary = jsonContent['summary'] as String?;
-        targetRecording.transcription = jsonContent['full_transcript'] as String?;
+        if (jsonContent.isNotEmpty){
+          targetRecording.summary = jsonContent['summary'] as String?;
+          targetRecording.transcription = jsonContent['full_transcript'] as String?;
+        }
         targetRecording.s3TranscriptJsonUrl = s3Key;
         targetRecording.updatedAt = DateTime.now();
         targetRecording.lastSyncTime = DateTime.now();
@@ -67,34 +85,45 @@ class RecordingRepository {
         
         // 子データ
         // 既存のものをクリア
+        if (speakersList != null){
         await isar.transcriptSegments.filter().recording((q) => q.idEqualTo(targetRecording.id)).deleteAll();
 
         // セグメントの作成
-        final speakersList = jsonContent['speakers'] as List<dynamic>?;
-
-        if (speakersList != null) {
-          final List<TranscriptSegment> newSegments = [];
+        final List<TranscriptSegment> newSegments = [];
 
           for (var item in speakersList) {
+            if (item is! Map<String, dynamic>) continue;
+
             final segment = TranscriptSegment()
               ..speaker = item['speaker'] ?? 'Unknown'
               ..text = item['text'] ?? ''
-              ..startTimeMs = ((item['startTime'] ?? 0) * 1000).toInt()
-              ..endTimeMs = ((item['endTime'] ?? 0) * 1000).toInt()
+              ..startTimeMs = ((item['startTime'] as num? ?? 0) * 1000).toInt()
+              ..endTimeMs = ((item['endTime'] as num? ?? 0) * 1000).toInt()
               ..searchTokens = (item['searchTokens'] as List<dynamic>?)
                 ?.map((e) => e.toString())
-                .toList()
-              ..recording.value = targetRecording;
-          
+                .toList();
+
+            if (item['translations'] != null) {
+              final List<dynamic> trList = item['translations'];
+              segment.translations = trList.map((t) {
+                final map = t as Map<String, dynamic>;
+                return TranslationData()
+                  ..langCode = map['langCode']
+                  ..text = map['text'];
+              }).toList();
+            }
+            segment.recording.value = targetRecording;
             newSegments.add(segment);
           }
 
           // 保存
-          await isar.transcriptSegments.putAll(newSegments);
+          if (newSegments.isNotEmpty){
+            await isar.transcriptSegments.putAll(newSegments);
 
-          // 親リンクも保存
-          targetRecording.transcripts.addAll(newSegments);
-          await targetRecording.transcripts.save();
+            // 親リンクも保存
+            targetRecording.transcripts.addAll(newSegments);
+            await targetRecording.transcripts.save();
+          }
         }
 
         // 親データを保存
@@ -315,7 +344,7 @@ class RecordingRepository {
         "endTime": t.endTimeMs / 1000.0,
         "searchTokens": t.searchTokens,
         "translations": t.translations?.map((tr) => {
-          "lang": tr.langCode,
+          "langCode": tr.langCode,
           "text": tr.text
         }).toList(),
       }).toList(),
@@ -379,6 +408,25 @@ class RecordingRepository {
       } catch (e) {
         print("削除同期失敗: $e");
       }
+    }
+  }
+
+  Future<void> requestTranslation(String recordingId, String targetLang, String idToken) async {
+    final uri = Uri.parse('$apiBaseUrl/translate');
+    final response = await http.post(
+      uri,
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': idToken,
+      },
+      body: jsonEncode({
+        'recordingId': recordingId,
+        'targetLang': targetLang,
+      }),
+    );
+
+    if (response.statusCode != 202 && response.statusCode != 200) {
+      throw Exception('Translation Request Failed: ${response.body}');
     }
   }
 
