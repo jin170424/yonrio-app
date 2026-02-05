@@ -6,6 +6,7 @@ import 'package:flutter/rendering.dart';
 import 'package:just_audio/just_audio.dart'; // HEAD由来
 import 'package:isar/isar.dart';
 import 'dart:io';
+import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 
 // Main由来
 import 'package:internet_connection_checker_plus/internet_connection_checker_plus.dart';
@@ -36,7 +37,9 @@ class _ResultScreenState extends State<ResultScreen> {
   late final RecordingRepository _repository;
 
   // 再生スクロールのためのコントローラー
-  final ScrollController _scrollController = ScrollController();
+  // final ScrollController _scrollController = ScrollController();
+  final ItemScrollController _itemScrollController = ItemScrollController();
+  final ItemPositionsListener _itemPositionsListener = ItemPositionsListener.create();
   // Stream & UI State (Main由来)
   Stream<Recording?>? _recordingStream;
   DisplayMode _currentMode = DisplayMode.transcription;
@@ -76,6 +79,7 @@ class _ResultScreenState extends State<ResultScreen> {
 
   bool _isUserScrolling = false;
   Timer? _scrollResumeTimer;
+  int _lastAutoScrolledIndex = -1;
 
   @override
   void initState() {
@@ -106,7 +110,7 @@ class _ResultScreenState extends State<ResultScreen> {
     _audioPlayer.dispose();
     _editController.dispose();
     _summaryController.dispose();
-    _scrollController.dispose();
+    // _scrollController.dispose();
     _scrollResumeTimer?.cancel();
     super.dispose();
   }
@@ -206,11 +210,20 @@ class _ResultScreenState extends State<ResultScreen> {
 
           int activeIndex = segments.lastIndexWhere((s) => ms >= s.startTimeMs);
 
-          if (activeIndex != -1 && _scrollController.hasClients) {
-            _scrollController.animateTo(
-              activeIndex * 120.0, 
+          // if (activeIndex != -1 && _scrollController.hasClients) {
+          if (activeIndex != -1 && activeIndex != _lastAutoScrolledIndex) {
+            _lastAutoScrolledIndex = activeIndex;
+          //   if (_scrollController.hasClients) {
+          //     _scrollController.animateTo(
+          //       activeIndex * 120.0, 
+          //       duration: const Duration(milliseconds: 300),
+          //       curve: Curves.easeInOut,
+          //     );
+            _itemScrollController.scrollTo(
+              index: activeIndex, // 何番目の行か指定
               duration: const Duration(milliseconds: 300),
               curve: Curves.easeInOut,
+              alignment: 0.1,
             );
           }
         }
@@ -346,73 +359,6 @@ class _ResultScreenState extends State<ResultScreen> {
       }
     );
   }
-
-
-  // void _loadLocalData() {
-  //   setState(() {
-  //     final summary = widget.recording.summary;
-  //     final transcription = widget.recording.transcription;
-  //     if (summary != null && summary.isNotEmpty) {
-  //       // 要約がある場合
-  //       _summaryText = summary;
-  //     } else {
-  //       _summaryText = "まだ要約がありません";
-  //       // TODO : 要約同期処理
-  //     }
-  //     if (transcription != null && transcription.isNotEmpty){
-  //       _transcriptionText = transcription;
-  //     } else {
-  //       _transcriptionText = "まだ文字起こしがありません";
-  //       // TODO : 文字起こし同期処理
-  //     }
-  //     _displayText = _transcriptionText;
-  //   });
-  // }
-
-  // // クラウドからデータ取得
-  // Future<void> _syncFromCloud({bool silent = false}) async {
-  //   if (widget.recording.remoteId == null) return;
-
-  //   if (!silent) setState(() => _isLoading = true);
-
-  //   try {
-  //     final tokenService = GetIdtokenService();
-  //     final token = await tokenService.getIdtoken();
-
-  //     if (token == null) {
-  //       if (!silent) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('ログインが必要です')));
-  //       return;
-  //     }
-
-  //     // リポジトリ経由で同期実行
-  //     // リポジトリ内でIsarへの保存(put)が行われる
-  //     await _repository.syncTranscriptionAndSummary(widget.recording, token);
-
-  //     // 成功したら画面のテキストを更新
-  //     _loadLocalData();
-
-  //     if (!silent) {
-  //       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('クラウドと同期しました')));
-  //     }
-  //   } catch (e) {
-  //     print("同期エラー: $e");
-  //     // silent実行時はユーザーにエラーを見せない（または控えめに表示）
-  //     if (!silent) {
-  //       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('同期失敗: まだ処理中かもしれません')));
-  //     }
-  //   } finally {
-  //     if (!silent) setState(() => _isLoading = false);
-  //   }
-  // }
-
-  // Future<void> _runGeminiTask(Function task) async {
-  //   setState(() => _isLoading = true);
-  //   final result = await task();
-  //   setState(() {
-  //     _transcriptionText = result;
-  //     _isLoading = false;
-  //   });
-  // }
 
 Future<void> s3Upload(String title) async {
   setState(() {
@@ -1012,33 +958,35 @@ Future<void> s3Upload(String title) async {
             if (mounted) {
               setState(() {
                 _isUserScrolling = false;
+                _lastAutoScrolledIndex = -1;
               });
             }
           });
         }
         return false;
       },
-      child: ListView.builder(
-      controller: _scrollController,//コントローラ追加
-      itemCount: segments.length,
-      padding: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
-      itemBuilder: (context, index) {
-        final segment = segments[index];
-        final isEditing = _editingIndex == index;
-        final String effectiveLang = _segmentLanguageOverrides[index] ?? _currentDisplayLanguage;
-        final bool isTranslateMode = effectiveLang != 'original';
-        String displayText = segment.text;
-        bool isCurrentTranslationAvailable = false;
-        if (isTranslateMode){
-          final translation = segment.translations?.firstWhere(
-            (t) => t.langCode == effectiveLang,
-            orElse: () => TranslationData(),
-          );
-          if (translation?.text != null){
-            displayText = translation!.text!;
-            isCurrentTranslationAvailable = true;
+      child: ScrollablePositionedList.builder(
+        itemScrollController: _itemScrollController, // コントローラーセット
+        itemPositionsListener: _itemPositionsListener, // リスナーセット
+        itemCount: segments.length,
+        padding: const EdgeInsets.only(bottom: 80, left: 16, right: 16),
+        itemBuilder: (context, index) {
+          final segment = segments[index];
+          final isEditing = _editingIndex == index;
+          final String effectiveLang = _segmentLanguageOverrides[index] ?? _currentDisplayLanguage;
+          final bool isTranslateMode = effectiveLang != 'original';
+          String displayText = segment.text;
+          bool isCurrentTranslationAvailable = false;
+          if (isTranslateMode){
+            final translation = segment.translations?.firstWhere(
+              (t) => t.langCode == effectiveLang,
+              orElse: () => TranslationData(),
+            );
+            if (translation?.text != null){
+              displayText = translation!.text!;
+              isCurrentTranslationAvailable = true;
+            }
           }
-        }
         return Padding(
           padding: const EdgeInsets.symmetric(vertical: 8.0),
           child: Column(
