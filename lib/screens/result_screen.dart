@@ -13,6 +13,7 @@ import 'package:internet_connection_checker_plus/internet_connection_checker_plu
 import 'package:voice_app/models/transcript_segment.dart';
 import 'package:voice_app/repositories/recording_repository.dart';
 import 'package:voice_app/services/s3download_service.dart';
+import 'package:voice_app/services/user_service.dart';
 import 'package:voice_app/utils/network_utils.dart';
 import '../services/gemini_service.dart';
 import '../models/recording.dart';
@@ -81,6 +82,8 @@ class _ResultScreenState extends State<ResultScreen> {
   Timer? _scrollResumeTimer;
   int _lastAutoScrolledIndex = -1;
 
+  String? _currentUserId;
+
   @override
   void initState() {
     super.initState();
@@ -103,6 +106,9 @@ class _ResultScreenState extends State<ResultScreen> {
 
     // 自動同期 (Main由来)
     _autoSyncIfNeeded();
+
+    // userId取得
+    _fetchCurrentUserId();
   }
 
   @override
@@ -113,6 +119,20 @@ class _ResultScreenState extends State<ResultScreen> {
     // _scrollController.dispose();
     _scrollResumeTimer?.cancel();
     super.dispose();
+  }
+
+  Future<void> _fetchCurrentUserId() async {
+    try {
+      final userId = await UserService().getCurrentUserSub(); 
+      
+      if (mounted) {
+        setState(() {
+          _currentUserId = userId;
+        });
+      }
+    } catch (e) {
+      print("ユーザーID取得エラー: $e");
+    }
   }
 
   // --- Audio Player Logic (HEAD由来) ---
@@ -142,6 +162,11 @@ class _ResultScreenState extends State<ResultScreen> {
   //     print("オーディオ読み込みエラー: $e");
   //   }
   // }
+
+  bool get _isOwner {
+    if (widget.recording.remoteId == null) return true;
+    return _currentUserId != null && widget.recording.sourceOriginalId == null;
+  }
 
   Future<void> _initAudioPlayer() async {
     try {
@@ -1038,7 +1063,7 @@ Future<void> s3Upload(String title) async {
 
                     const Spacer(),
 
-                    if(!isEditing && !_isProcessing && !isTranslateMode) 
+                    if(!isEditing && !_isProcessing && !isTranslateMode && _isOwner) 
                       GestureDetector(
                         onTap: () {
                           setState(() {
@@ -1137,7 +1162,7 @@ Future<void> s3Upload(String title) async {
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           // 編集ボタン（表示モードかつデータがある場合）
-          if (!_isEditingSummary && !_isProcessing)
+          if (_isOwner && !_isEditingSummary && !_isProcessing)
             Padding(
               padding: const EdgeInsets.only(top: 8, right: 16),
               child: TextButton.icon(
@@ -1289,15 +1314,24 @@ Future<void> s3Upload(String title) async {
               onPressed: _isProcessing ? null : () => _manualSync(),
             ),
             IconButton(
-              icon: const Icon(Icons.share),
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => ShareScreen(textContent: shareContent),
+            icon: const Icon(Icons.share),
+            onPressed: () {
+              // テキストが存在するかチェック（リストが空でないか）
+              final bool hasText = recording.transcripts.isNotEmpty;
+
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => ShareScreen(
+                    textContent: shareContent,
+                    recordingId: recording.remoteId, // null許容のまま渡す
+                    filePath: recording.filePath,    // 追加: ファイルパスを渡す
+                    hasTranscript: hasText,          // 追加: テキスト有無フラグ
+                    isOwner: _isOwner,
                   ),
-                );
-              },
+                ),
+              );
+            },
           ),
         ],
       ),

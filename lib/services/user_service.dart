@@ -8,31 +8,6 @@ class UserService {
   factory UserService() => _instance;
   UserService._internal();
 
-  // Future<String> getCurrentUserId() async {
-  //   const key = 'cached_user_id';
-  //   final prefs = await SharedPreferences.getInstance();
-
-  //   try {
-  //     //オンライン取得
-  //     final user = await Amplify.Auth.getCurrentUser();
-  //     final userId = user.userId;
-
-  //     // 成功したらキャッシュ更新
-  //     await prefs.setString(key, userId);
-  //     return userId;
-
-  //   } catch (e) {
-  //     // エラー(オフライン)ならキャッシュを見る
-  //     final cachedId = prefs.getString(key);
-  //     if (cachedId != null) {
-  //       safePrint('オフラインのためキャッシュされたIDを使用: $cachedId');
-  //       return cachedId;
-  //     }
-      
-  //     return 'unknown_user'; // キャッシュもなければ未明
-  //   }
-  // }
-
   Future<String?> getPreferredUsername() async {
     try {
       final attributes = await Amplify.Auth.fetchUserAttributes();
@@ -86,5 +61,17 @@ class UserService {
       print('Sync failed, offline or error: $e');
     }
   }
-
+  Future<String?> getCurrentUserSub() async {
+    try {
+      final attributes = await Amplify.Auth.fetchUserAttributes();
+      // 'sub' 属性を探して値を返す
+      final subAttribute = attributes.firstWhere(
+        (element) => element.userAttributeKey.key == 'sub',
+      );
+      return subAttribute.value;
+    } catch (e) {
+      print('Error fetching user sub: $e');
+      return null;
+    }
+  }
 }

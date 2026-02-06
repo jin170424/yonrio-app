@@ -47,59 +47,64 @@ const RecordingSchema = CollectionSchema(
       name: r'needsCloudUpdate',
       type: IsarType.bool,
     ),
-    r'ownerName': PropertySchema(
+    r'ownerId': PropertySchema(
       id: 6,
+      name: r'ownerId',
+      type: IsarType.string,
+    ),
+    r'ownerName': PropertySchema(
+      id: 7,
       name: r'ownerName',
       type: IsarType.string,
     ),
     r'remoteId': PropertySchema(
-      id: 7,
+      id: 8,
       name: r'remoteId',
       type: IsarType.string,
     ),
     r's3AudioUrl': PropertySchema(
-      id: 8,
+      id: 9,
       name: r's3AudioUrl',
       type: IsarType.string,
     ),
     r's3TranscriptJsonUrl': PropertySchema(
-      id: 9,
+      id: 10,
       name: r's3TranscriptJsonUrl',
       type: IsarType.string,
     ),
     r'sharedWith': PropertySchema(
-      id: 10,
+      id: 11,
       name: r'sharedWith',
       type: IsarType.objectList,
       target: r'SharedUser',
     ),
     r'sourceOriginalId': PropertySchema(
-      id: 11,
+      id: 12,
       name: r'sourceOriginalId',
       type: IsarType.string,
     ),
     r'status': PropertySchema(
-      id: 12,
+      id: 13,
       name: r'status',
       type: IsarType.string,
     ),
     r'summary': PropertySchema(
-      id: 13,
+      id: 14,
       name: r'summary',
       type: IsarType.string,
     ),
     r'title': PropertySchema(
-      id: 14,
+      id: 15,
       name: r'title',
       type: IsarType.string,
     ),
     r'transcription': PropertySchema(
-      id: 15,
+      id: 16,
       name: r'transcription',
       type: IsarType.string,
     ),
     r'updatedAt': PropertySchema(
-      id: 16,
+      id: 17,
       name: r'updatedAt',
       type: IsarType.dateTime,
     )
@@ -118,6 +123,19 @@ const RecordingSchema = CollectionSchema(
       properties: [
         IndexPropertySchema(
           name: r'remoteId',
+          type: IndexType.hash,
+          caseSensitive: true,
+        )
+      ],
+    ),
+    r'ownerId': IndexSchema(
+      id: -7594796109721319539,
+      name: r'ownerId',
+      unique: false,
+      replace: false,
+      properties: [
+        IndexPropertySchema(
+          name: r'ownerId',
           type: IndexType.hash,
           caseSensitive: true,
         )
@@ -198,6 +216,12 @@ int _recordingEstimateSize(
 ) {
   var bytesCount = offsets.last;
   bytesCount += 3 + object.filePath.length * 3;
+  {
+    final value = object.ownerId;
+    if (value != null) {
+      bytesCount += 3 + value.length * 3;
+    }
+  }
   bytesCount += 3 + object.ownerName.length * 3;
   {
     final value = object.remoteId;
@@ -271,22 +295,23 @@ void _recordingSerialize(
   writer.writeDateTime(offsets[3], object.lastSyncTime);
   writer.writeBool(offsets[4], object.needsCloudDelete);
   writer.writeBool(offsets[5], object.needsCloudUpdate);
-  writer.writeString(offsets[6], object.ownerName);
-  writer.writeString(offsets[7], object.remoteId);
-  writer.writeString(offsets[8], object.s3AudioUrl);
-  writer.writeString(offsets[9], object.s3TranscriptJsonUrl);
+  writer.writeString(offsets[6], object.ownerId);
+  writer.writeString(offsets[7], object.ownerName);
+  writer.writeString(offsets[8], object.remoteId);
+  writer.writeString(offsets[9], object.s3AudioUrl);
+  writer.writeString(offsets[10], object.s3TranscriptJsonUrl);
   writer.writeObjectList<SharedUser>(
-    offsets[10],
+    offsets[11],
     allOffsets,
     SharedUserSchema.serialize,
     object.sharedWith,
   );
-  writer.writeString(offsets[11], object.sourceOriginalId);
-  writer.writeString(offsets[12], object.status);
-  writer.writeString(offsets[13], object.summary);
-  writer.writeString(offsets[14], object.title);
-  writer.writeString(offsets[15], object.transcription);
-  writer.writeDateTime(offsets[16], object.updatedAt);
+  writer.writeString(offsets[12], object.sourceOriginalId);
+  writer.writeString(offsets[13], object.status);
+  writer.writeString(offsets[14], object.summary);
+  writer.writeString(offsets[15], object.title);
+  writer.writeString(offsets[16], object.transcription);
+  writer.writeDateTime(offsets[17], object.updatedAt);
 }
 
 Recording _recordingDeserialize(
@@ -303,22 +328,23 @@ Recording _recordingDeserialize(
   object.lastSyncTime = reader.readDateTimeOrNull(offsets[3]);
   object.needsCloudDelete = reader.readBool(offsets[4]);
   object.needsCloudUpdate = reader.readBool(offsets[5]);
-  object.ownerName = reader.readString(offsets[6]);
-  object.remoteId = reader.readStringOrNull(offsets[7]);
-  object.s3AudioUrl = reader.readStringOrNull(offsets[8]);
-  object.s3TranscriptJsonUrl = reader.readStringOrNull(offsets[9]);
+  object.ownerId = reader.readStringOrNull(offsets[6]);
+  object.ownerName = reader.readString(offsets[7]);
+  object.remoteId = reader.readStringOrNull(offsets[8]);
+  object.s3AudioUrl = reader.readStringOrNull(offsets[9]);
+  object.s3TranscriptJsonUrl = reader.readStringOrNull(offsets[10]);
   object.sharedWith = reader.readObjectList<SharedUser>(
-    offsets[10],
+    offsets[11],
     SharedUserSchema.deserialize,
     allOffsets,
     SharedUser(),
   );
-  object.sourceOriginalId = reader.readStringOrNull(offsets[11]);
-  object.status = reader.readStringOrNull(offsets[12]);
-  object.summary = reader.readStringOrNull(offsets[13]);
-  object.title = reader.readString(offsets[14]);
-  object.transcription = reader.readStringOrNull(offsets[15]);
-  object.updatedAt = reader.readDateTime(offsets[16]);
+  object.sourceOriginalId = reader.readStringOrNull(offsets[12]);
+  object.status = reader.readStringOrNull(offsets[13]);
+  object.summary = reader.readStringOrNull(offsets[14]);
+  object.title = reader.readString(offsets[15]);
+  object.transcription = reader.readStringOrNull(offsets[16]);
+  object.updatedAt = reader.readDateTime(offsets[17]);
   return object;
 }
 
@@ -342,31 +368,33 @@ P _recordingDeserializeProp<P>(
     case 5:
       return (reader.readBool(offset)) as P;
     case 6:
-      return (reader.readString(offset)) as P;
-    case 7:
       return (reader.readStringOrNull(offset)) as P;
+    case 7:
+      return (reader.readString(offset)) as P;
     case 8:
       return (reader.readStringOrNull(offset)) as P;
     case 9:
       return (reader.readStringOrNull(offset)) as P;
     case 10:
+      return (reader.readStringOrNull(offset)) as P;
+    case 11:
       return (reader.readObjectList<SharedUser>(
         offset,
         SharedUserSchema.deserialize,
         allOffsets,
         SharedUser(),
       )) as P;
-    case 11:
-      return (reader.readStringOrNull(offset)) as P;
     case 12:
       return (reader.readStringOrNull(offset)) as P;
     case 13:
       return (reader.readStringOrNull(offset)) as P;
     case 14:
-      return (reader.readString(offset)) as P;
-    case 15:
       return (reader.readStringOrNull(offset)) as P;
+    case 15:
+      return (reader.readString(offset)) as P;
     case 16:
+      return (reader.readStringOrNull(offset)) as P;
+    case 17:
       return (reader.readDateTime(offset)) as P;
     default:
       throw IsarError('Unknown property with id $propertyId');
@@ -609,6 +637,71 @@ extension RecordingQueryWhere
               indexName: r'remoteId',
               lower: [],
               upper: [remoteId],
+              includeUpper: false,
+            ));
+      }
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterWhereClause> ownerIdIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addWhereClause(IndexWhereClause.equalTo(
+        indexName: r'ownerId',
+        value: [null],
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterWhereClause> ownerIdIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addWhereClause(IndexWhereClause.between(
+        indexName: r'ownerId',
+        lower: [null],
+        includeLower: false,
+        upper: [],
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterWhereClause> ownerIdEqualTo(
+      String? ownerId) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addWhereClause(IndexWhereClause.equalTo(
+        indexName: r'ownerId',
+        value: [ownerId],
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterWhereClause> ownerIdNotEqualTo(
+      String? ownerId) {
+    return QueryBuilder.apply(this, (query) {
+      if (query.whereSort == Sort.asc) {
+        return query
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'ownerId',
+              lower: [],
+              upper: [ownerId],
+              includeUpper: false,
+            ))
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'ownerId',
+              lower: [ownerId],
+              includeLower: false,
+              upper: [],
+            ));
+      } else {
+        return query
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'ownerId',
+              lower: [ownerId],
+              includeLower: false,
+              upper: [],
+            ))
+            .addWhereClause(IndexWhereClause.between(
+              indexName: r'ownerId',
+              lower: [],
+              upper: [ownerId],
               includeUpper: false,
             ));
       }
@@ -1476,6 +1569,153 @@ extension RecordingQueryFilter
       return query.addFilterCondition(FilterCondition.equalTo(
         property: r'needsCloudUpdate',
         value: value,
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterFilterCondition> ownerIdIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNull(
+        property: r'ownerId',
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterFilterCondition> ownerIdIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNotNull(
+        property: r'ownerId',
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterFilterCondition> ownerIdEqualTo(
+    String? value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'ownerId',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterFilterCondition> ownerIdGreaterThan(
+    String? value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        include: include,
+        property: r'ownerId',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterFilterCondition> ownerIdLessThan(
+    String? value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.lessThan(
+        include: include,
+        property: r'ownerId',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterFilterCondition> ownerIdBetween(
+    String? lower,
+    String? upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.between(
+        property: r'ownerId',
+        lower: lower,
+        includeLower: includeLower,
+        upper: upper,
+        includeUpper: includeUpper,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterFilterCondition> ownerIdStartsWith(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.startsWith(
+        property: r'ownerId',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterFilterCondition> ownerIdEndsWith(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.endsWith(
+        property: r'ownerId',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterFilterCondition> ownerIdContains(
+      String value,
+      {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.contains(
+        property: r'ownerId',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterFilterCondition> ownerIdMatches(
+      String pattern,
+      {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.matches(
+        property: r'ownerId',
+        wildcard: pattern,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterFilterCondition> ownerIdIsEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'ownerId',
+        value: '',
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterFilterCondition>
+      ownerIdIsNotEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        property: r'ownerId',
+        value: '',
       ));
     });
   }
@@ -3106,6 +3346,18 @@ extension RecordingQuerySortBy on QueryBuilder<Recording, Recording, QSortBy> {
     });
   }
 
+  QueryBuilder<Recording, Recording, QAfterSortBy> sortByOwnerId() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'ownerId', Sort.asc);
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterSortBy> sortByOwnerIdDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'ownerId', Sort.desc);
+    });
+  }
+
   QueryBuilder<Recording, Recording, QAfterSortBy> sortByOwnerName() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'ownerName', Sort.asc);
@@ -3317,6 +3569,18 @@ extension RecordingQuerySortThenBy
     });
   }
 
+  QueryBuilder<Recording, Recording, QAfterSortBy> thenByOwnerId() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'ownerId', Sort.asc);
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterSortBy> thenByOwnerIdDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'ownerId', Sort.desc);
+    });
+  }
+
   QueryBuilder<Recording, Recording, QAfterSortBy> thenByOwnerName() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'ownerName', Sort.asc);
@@ -3479,6 +3743,13 @@ extension RecordingQueryWhereDistinct
     });
   }
 
+  QueryBuilder<Recording, Recording, QDistinct> distinctByOwnerId(
+      {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'ownerId', caseSensitive: caseSensitive);
+    });
+  }
+
   QueryBuilder<Recording, Recording, QDistinct> distinctByOwnerName(
       {bool caseSensitive = true}) {
     return QueryBuilder.apply(this, (query) {
@@ -3593,6 +3864,12 @@ extension RecordingQueryProperty
   QueryBuilder<Recording, bool, QQueryOperations> needsCloudUpdateProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'needsCloudUpdate');
+    });
+  }
+
+  QueryBuilder<Recording, String?, QQueryOperations> ownerIdProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'ownerId');
     });
   }
 

@@ -14,6 +14,9 @@ class Recording {
   @Index(unique: true, replace:true)
   String? remoteId;
 
+  @Index()
+  String? ownerId;
+  
   late String ownerName;
 
   // タイトル (検索用にインデックスを貼る)

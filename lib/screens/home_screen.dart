@@ -34,27 +34,39 @@ class _HomeScreenState extends State<HomeScreen> {
   Stream<List<Recording>>? _recordingStream;
   late final RecordingRepository _repository;
   bool _isSyncing = false;
+  String? _currentUserId;
 
   @override
   void initState() {
     super.initState();
+    _initialize();
+  }
 
+  Future<void> _initialize() async {
     final isar = Isar.getInstance();
     final dio = Dio();
-    if (isar != null) {
-      _repository = RecordingRepository(isar: isar, dio: dio);
-      _initRecordingStream();
+    final userService = UserService();
+    final userId = await userService.getCurrentUserSub();
+    if (isar != null && userId != null) {
+      setState(() {
+        _currentUserId = userId;
+        _repository = RecordingRepository(isar: isar, dio: dio);
+      });
+      _initRecordingStream(userId);
       _quietSyncOnStartup();
+    } else {
+      print("Error: User ID or Isar instance is missing");
     }
   }
 
-  void _initRecordingStream() {
+  void _initRecordingStream(String currentUserId) {
     final isar = Isar.getInstance();
     if (isar != null) {
       setState(() {
         _recordingStream = isar.recordings
-            .where()
             .filter()
+            .ownerIdEqualTo(currentUserId) // 自分のデータのみに絞り込む
+            .and()
             .needsCloudDeleteEqualTo(false)
             .sortByCreatedAtDesc()
             .watch(fireImmediately: true);
@@ -63,6 +75,7 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _quietSyncOnStartup() async {
+    if (_currentUserId == null) return;
     // ネット接続確認
     final bool isConnected = await InternetConnection().hasInternetAccess;
     if (!isConnected) {
@@ -76,8 +89,8 @@ class _HomeScreenState extends State<HomeScreen> {
         final tokenService = GetIdtokenService();
         final token = await tokenService.getIdtoken();
         if (token != null) {
-          await _repository.syncPendingDeletions(token);
-          await _repository.syncPendingChanges(token);
+          await _repository.syncPendingDeletions(token, _currentUserId!);
+          await _repository.syncPendingChanges(token, _currentUserId!);
           await _syncMetadataList();
         }
       } catch (e) {
@@ -254,6 +267,42 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // 長押し時のメニューシート
   void _showItemMenu(Recording recording) {
+    final bool isOwner = _currentUserId != null && recording.sourceOriginalId == null;
+    // 共有されたアイテムの場合、削除・変更できないようにする
+    if (!isOwner){
+      showModalBottomSheet(
+        context: context,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+        ),
+        builder: (context) {
+          return SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Padding(
+                  padding: EdgeInsets.all(16.0),
+                  child: Text(
+                    "共有されたアイテムのため\n変更や削除はできません",
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.grey, fontSize: 16),
+                  ),
+                ),
+                const Divider(),
+                ListTile(
+                  leading: const Icon(Icons.close),
+                  title: const Text('閉じる'),
+                  onTap: () {
+                    Navigator.pop(context);
+                  },
+                ),
+              ],
+            ),
+          );
+        },
+      );
+      return;
+    }
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -290,7 +339,7 @@ class _HomeScreenState extends State<HomeScreen> {
   // --- origin/main由来の機能: 同期 ---
 
   Future<void> _syncMetadataList() async {
-    if (_isSyncing) return;
+    if (_isSyncing|| _currentUserId == null) return;
 
     setState(() => _isSyncing = true);
     try {
@@ -298,7 +347,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final token = await tokenService.getIdtoken();
 
       if (token != null) {
-        await _repository.syncMetadataList(token);
+        await _repository.syncMetadataList(token, _currentUserId!);
         print('メタデータ同期完了');
       } else {
         print('未ログインのため同期スキップ');
@@ -320,15 +369,12 @@ class _HomeScreenState extends State<HomeScreen> {
   // --- 共通機能 ---
 
   Future<void> _importFile() async {
-    // try {
-    //   final result = await FilePicker.platform.pickFiles(
-    //     type: FileType.custom,
-    //     allowedExtensions: ['mp3', 'm4a', 'wav', 'aac'], 
-    //   );
-
-    //   if (result != null && result.files.single.path != null) {
-    //     await _processImport(result.files.single.path!, result.files.single.name);
-    //   }
+    if (_currentUserId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('初期化中です。少々お待ちください。')),
+      );
+      return;
+    }
     try {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.audio, // customではなくaudioに変更
@@ -345,7 +391,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _processImport(String originalPath, String fileName) async {
     final ownerName = await UserService().getPreferredUsername();
       try{
-        if (ownerName == null) {
+        if (ownerName == null || _currentUserId == null) {
           if (!mounted) return;
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('ユーザー情報が取得できません。再ログインしてください。')),
@@ -376,6 +422,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ..title = "インポート: $fileName" 
             ..filePath = newPath
             ..ownerName = ownerName
+            ..ownerId = _currentUserId
             ..durationSeconds = 0
             ..createdAt = DateTime.now()
             ..updatedAt = DateTime.now()
@@ -399,6 +446,13 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _pickAndSaveImage(ImageSource source) async {
+    if (_currentUserId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('ユーザー情報を取得中です')),
+      );
+      return;
+    }
+    
     try {
       final picker = ImagePicker();
       final XFile? photo = await picker.pickImage(source: source);
@@ -422,13 +476,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final savedImage = await File(photo.path).copy('${appDir.path}/$fileName');
 
       // ユーザーIDを取得して ownerName に入れる
-      String currentUserId = 'unknown_user';
-      try {
-          final user = await Amplify.Auth.getCurrentUser();
-          currentUserId = user.userId;
-      } catch(e) {
-          print("ユーザーID取得失敗(画像保存): $e");
-      }
+      final ownerName = await UserService().getPreferredUsername() ?? "Unknown";
 
       final isar = Isar.getInstance();
       if (isar != null) {
@@ -439,7 +487,8 @@ class _HomeScreenState extends State<HomeScreen> {
           ..createdAt = DateTime.now()
           ..updatedAt = DateTime.now()
           ..lastSyncTime = DateTime.fromMillisecondsSinceEpoch(0)
-          ..ownerName = currentUserId
+          ..ownerName = ownerName
+          ..ownerId = _currentUserId
           // ★修正: nullだと重複扱いされるため、一時的なIDを生成
           ..remoteId = _generateUniqueId()
           ..status = 'pending';
@@ -584,7 +633,11 @@ class _HomeScreenState extends State<HomeScreen> {
                     IconData leadIcon = Icons.mic;
                     Color iconColor = Colors.blue;
                     
-                    if (path.endsWith('.jpg') || path.endsWith('.jpeg') || path.endsWith('.png')) {
+                    if (recording.sourceOriginalId != null && recording.sourceOriginalId!.isNotEmpty) {
+                      // 共有されたアイテム (sourceOriginalIdを持っている)
+                      leadIcon = Icons.folder_shared; 
+                      iconColor = Colors.teal;
+                    } else if (path.endsWith('.jpg') || path.endsWith('.jpeg') || path.endsWith('.png')) {
                       leadIcon = Icons.image;
                       iconColor = Colors.purple;
                     } else if (fileName.startsWith('imported_')) {

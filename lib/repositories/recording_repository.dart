@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:http/http.dart' as http;
 import 'package:intl/intl.dart';
@@ -55,27 +56,53 @@ class RecordingRepository {
       // final Map<String, dynamic> jsonContent = jsonDecode(utf8.decode(s3Response.bodyBytes));
       final dynamic decoded = jsonDecode(utf8.decode(s3Response.bodyBytes));
 
+
+      if (decoded is Map) {
+        print("S3 JSON Keys: ${decoded.keys.toList()}"); // キーの一覧を表示
+        print("Full Transcript Value: ${decoded['full_transcript']?.toString().substring(0, 20)}..."); // 先頭だけ表示してみる
+      } else {
+        print("S3 JSON is List format");
+      }
+
+    
+      String? fetchedSummary;
+      String? fetchedTranscription;
       Map<String, dynamic> jsonContent;
       List<dynamic>? speakersList;
 
       if (decoded is List) {
         print("古い形式(List)のJSONを検出しました。互換モードで処理します。");
-        jsonContent = {}; // 空のマップを入れておく
+        // jsonContent = {}; // 空のマップを入れておく
         speakersList = decoded;
-        
-      } else if (decoded is Map<String, dynamic>) {
-        jsonContent = decoded;
-        speakersList = jsonContent['speakers'] as List<dynamic>?;
+        fetchedSummary = null;
+      } else if (decoded is Map) {
+        final dynamic speakersRaw = decoded['speakers'];
+        if (speakersRaw is List) {
+          speakersList = speakersRaw;
+        } else if (speakersRaw != null) {
+          print("警告: 'speakers' がリスト形式ではありません。型: ${speakersRaw.runtimeType}, 値: $speakersRaw");
+          speakersList = []; // 空リストにしてクラッシュを防ぐ
+        }
+        fetchedSummary = decoded['summary'] as String?;
+        fetchedTranscription = decoded['full_transcript'] as String?;
       } else {
         throw Exception("不明なJSON形式です: ${decoded.runtimeType}");
+      }
+
+      if ((fetchedTranscription == null || fetchedTranscription.isEmpty) && speakersList != null) {
+        fetchedTranscription = speakersList
+            .map((item) => item['text'] as String? ?? '')
+            .join(""); 
       }
 
       // isar更新
       await isar.writeTxn(() async {
         // 親データ
-        if (jsonContent.isNotEmpty){
-          targetRecording.summary = jsonContent['summary'] as String?;
-          targetRecording.transcription = jsonContent['full_transcript'] as String?;
+        if (fetchedSummary != null){
+          targetRecording.summary = fetchedSummary;
+        }
+        if (fetchedTranscription != null) {
+          targetRecording.transcription = fetchedTranscription;
         }
         targetRecording.s3TranscriptJsonUrl = s3Key;
         targetRecording.updatedAt = DateTime.now();
@@ -103,13 +130,15 @@ class RecordingRepository {
                 ?.map((e) => e.toString())
                 .toList();
 
-            if (item['translations'] != null) {
+            if (item['translations'] != null && item['translations'] is List) {
               final List<dynamic> trList = item['translations'];
               segment.translations = trList.map((t) {
-                final map = t as Map<String, dynamic>;
-                return TranslationData()
-                  ..langCode = map['langCode']
-                  ..text = map['text'];
+                if (t is Map<String, dynamic>) {
+                  return TranslationData()
+                    ..langCode = t['langCode']
+                    ..text = t['text'];
+                }
+                return TranslationData()..text = "";
               }).toList();
             }
             segment.recording.value = targetRecording;
@@ -139,7 +168,7 @@ class RecordingRepository {
   }
 
   // DynamoDBのメタデータ一覧を同期する
-  Future<void> syncMetadataList(String idToken) async {
+  Future<void> syncMetadataList(String idToken, String currentUserId) async {
     try {
       final uri = Uri.parse('$apiBaseUrl/list');
       final response = await http.get(
@@ -154,8 +183,24 @@ class RecordingRepository {
         throw Exception('API List Error: ${response.body}');
       }
 
+      final dynamic decodedResponse = jsonDecode(utf8.decode(response.bodyBytes));
+      print("API Response Type: ${decodedResponse.runtimeType}");
+      if (decodedResponse is Map) {
+        // APIが {"message": "Internal Server Error"} などを返している場合への対策
+        print("API Unexpected Response: $decodedResponse");
+        throw Exception("サーバーから予期しないデータが返されました: ${decodedResponse['message'] ?? decodedResponse}");
+      }
+
+      if (decodedResponse is! List) {
+        throw Exception("リスト形式ではありません: $decodedResponse");
+      }
+
       // DynamoDBからのレスポンスリスト(Items)
-      final List<dynamic> remoteItems = jsonDecode(utf8.decode(response.bodyBytes));
+      final List<dynamic> remoteItems = decodedResponse;
+
+      final Set<String> activeServerIds = remoteItems
+          .map((json) => json['id'] as String)
+          .toSet();
 
       await isar.writeTxn(() async {
         for (var item in remoteItems) {
@@ -165,6 +210,8 @@ class RecordingRepository {
           Recording? localRecording = await isar.recordings
             .filter()
             .remoteIdEqualTo(remoteId)
+            .and()
+            .ownerIdEqualTo(currentUserId)
             .findFirst();
 
           List<SharedUser>? sharedWithList;
@@ -192,6 +239,7 @@ class RecordingRepository {
             // 新規作成
             localRecording = Recording()
               ..remoteId = remoteId
+              ..ownerId = currentUserId
               ..filePath = ""
               ..transcription = "（未取得）"
               ..summary = "（未取得）";
@@ -201,6 +249,8 @@ class RecordingRepository {
           localRecording
             ..title = item['title'] ?? localRecording.title
             ..status = item['status'] ?? 'processing'
+            ..summary = item['summary'] ?? localRecording.summary
+            ..ownerId = currentUserId
             ..s3AudioUrl = item['s3AudioUrl']
             ..s3TranscriptJsonUrl = item['s3TranscriptJsonUrl']
             ..ownerName = item['ownerName'] ?? localRecording.ownerName
@@ -213,6 +263,7 @@ class RecordingRepository {
           await isar.recordings.put(localRecording);
         }
       });
+      await _deleteOrphanedSharedRecords(activeServerIds, currentUserId);
       print('メタデータ同期完了: ${remoteItems.length}件');
     } catch (e) {
       print('メタデータ同期エラー: $e');
@@ -221,10 +272,67 @@ class RecordingRepository {
 
   }
 
+  Future<void> _deleteOrphanedSharedRecords(Set<String> activeServerIds, String currentUserId) async {
+    
+    // ローカルにある「共有された(コピー)レコード」を全て取得
+    // - 自分のデータである (念のため)
+    // - remoteId が入っている (クラウド同期済み)
+    // - sourceOriginalId が入っている (＝共有されたコピーである)
+    final sharedLocalRecordings = await isar.recordings
+        .filter()
+        .ownerIdEqualTo(currentUserId)
+        .remoteIdIsNotNull()
+        // .sourceOriginalIdIsNotNull() // 自分の未アップロードデータを守る
+        .needsCloudUpdateEqualTo(false) // ★追加: アップロード待ちのデータは消さないように保護
+        .needsCloudDeleteEqualTo(false)
+        .findAll();
+
+    // サーバーIDリストに存在しないものを特定
+    final idsToDelete = <int>[];
+    
+    for (final recording in sharedLocalRecordings) {
+      // ローカルのremoteIdが、サーバーのリストになければ削除対象
+      if (!activeServerIds.contains(recording.remoteId)) {
+        print('削除対象を検知: ${recording.title} (Server ID missing)');
+        idsToDelete.add(recording.id);
+        
+        // 音声ファイルの実体も消すならここでFile(recording.filePath).delete()などを行う
+        if (recording.filePath.isNotEmpty) {
+          final file = File(recording.filePath);
+          if (await file.exists()) {
+            await file.delete();
+            print('ローカル音声削除: ${recording.filePath}');
+          }
+        }
+      }
+    }
+
+    // 一括削除実行
+    if (idsToDelete.isNotEmpty) {
+      await isar.writeTxn(() async {
+        for (final id in idsToDelete) {
+          final recording = await isar.recordings.get(id);
+          
+          if (recording != null) {
+            await recording.transcripts.load();
+            final segmentIds = recording.transcripts.map((e) => e.id).toList();
+            if (segmentIds.isNotEmpty) {
+              await isar.transcriptSegments.deleteAll(segmentIds);
+            }
+            await isar.recordings.delete(id);
+          }
+        }
+        
+      });
+      print('${idsToDelete.length} 件の共有解除されたデータを削除しました。');
+    }
+  }
+
   Future<void> saveRecording({
     required String filePath,
     required int duration,
     required String ownerName,
+    required String ownerId,
   }) async {
 
     final newRecording = Recording()
@@ -234,6 +342,7 @@ class RecordingRepository {
       ..createdAt = DateTime.now()
       ..updatedAt = DateTime.now()
       ..ownerName = ownerName
+      ..ownerId = ownerId
       ..status = 'processing';
 
     await isar.writeTxn(() async {
@@ -351,10 +460,12 @@ class RecordingRepository {
     };
   }
   
-  Future<void> syncPendingChanges(String idToken) async {
+  Future<void> syncPendingChanges(String idToken, String currentUserId) async {
     // 更新待ちのデータを取得
     final pendingUpdates = await isar.recordings
         .filter()
+        .ownerIdEqualTo(currentUserId) // 自分の変更だけを対象にする
+        .and()
         .needsCloudUpdateEqualTo(true)
         .findAll();
 
@@ -377,9 +488,11 @@ class RecordingRepository {
 
   }
 
-  Future<void> syncPendingDeletions(String idToken) async {
+  Future<void> syncPendingDeletions(String idToken, String currentUserId) async {
     final pendingDeletes = await isar.recordings
       .filter()
+      .ownerIdEqualTo(currentUserId) // 自分の削除リクエストだけを対象にする
+      .and()
       .needsCloudDeleteEqualTo(true)
       .findAll();
 
