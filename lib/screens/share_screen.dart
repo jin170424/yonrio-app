@@ -75,22 +75,22 @@ class ShareScreen extends StatelessWidget {
             const Divider(),
 
             // 音声ファイルのリンク発行 (AWS S3)
-            ListTile(
-              leading: Icon(Icons.link, 
-                color: isUploaded ? Colors.green : Colors.grey),
-              title: Text('音声リンクを発行 (S3)',
-                style: TextStyle(color: isUploaded ? Colors.black : Colors.grey)),
-              subtitle: isUploaded 
-                  ? const Text('誰でも聞けるURLを作成します (1時間有効)')
-                  : const Text('※クラウドへの保存が必要です'),
-              enabled: isUploaded,
-              onTap: isUploaded ? () {
-                // TODO: Presigned URL発行処理
-                const dummyUrl = "https://s3.aws.amazon.com/.../audio.m4a";
-                Share.share("音声ファイルのリンクです: $dummyUrl");
-              } : null,
-            ),
-            const Divider(),
+            // ListTile(
+            //   leading: Icon(Icons.link, 
+            //     color: isUploaded ? Colors.green : Colors.grey),
+            //   title: Text('音声リンクを発行 (S3)',
+            //     style: TextStyle(color: isUploaded ? Colors.black : Colors.grey)),
+            //   subtitle: isUploaded 
+            //       ? const Text('誰でも聞けるURLを作成します (1時間有効)')
+            //       : const Text('※クラウドへの保存が必要です'),
+            //   enabled: isUploaded,
+            //   onTap: isUploaded ? () {
+            //     // TODO: Presigned URL発行処理
+            //     const dummyUrl = "https://s3.aws.amazon.com/.../audio.m4a";
+            //     Share.share("音声ファイルのリンクです: $dummyUrl");
+            //   } : null,
+            // ),
+            // const Divider(),
             
             // 3. アプリ内共有 (オプション機能)
             ListTile(
@@ -461,7 +461,9 @@ class _ShareModalContentState extends State<_ShareModalContent> {
   final Isar _isar = Isar.getInstance()!;
   
   bool _isLoading = false;
-  String? _errorText;
+  String? _errorText; // 入力欄に表示するエラー
+  String? _generalError; // モーダル上部のエラー
+  String? _successMessage; // 成功通知
 
   @override
   void dispose() {
@@ -472,6 +474,26 @@ class _ShareModalContentState extends State<_ShareModalContent> {
   void _setError(String? text) {
     setState(() {
       _errorText = text;
+      _generalError = null;
+      _successMessage = null;
+      _isLoading = false;
+    });
+  }
+
+  void _setGeneralError(String? text) {
+    setState(() {
+      _generalError = text;
+      _errorText = null;
+      _successMessage = null;
+      _isLoading = false;
+    });
+  }
+
+  void _setSuccessMessage(String text) {
+    setState(() {
+      _successMessage = text;
+      _generalError = null;    // 成功したらエラーは消す
+      _errorText = null;
       _isLoading = false;
     });
   }
@@ -515,6 +537,59 @@ class _ShareModalContentState extends State<_ShareModalContent> {
               ),
               const Divider(height: 1),
 
+              // 全体メッセージ表示エリア
+              if (_generalError != null)
+                Container(
+                  width: double.infinity,
+                  color: Colors.red.shade50,
+                  padding: const EdgeInsets.all(8.0),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.error_outline, color: Colors.red, size: 20),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _generalError!,
+                          style: const TextStyle(color: Colors.red, fontSize: 13),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close, size: 16, color: Colors.red),
+                        onPressed: () => setState(() => _generalError = null),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                      )
+                    ],
+                  ),
+                ),
+          
+
+              // 成功メッセージがある場合
+              if (_successMessage != null)
+                Container(
+                  width: double.infinity,
+                  color: Colors.green.shade50,
+                  padding: const EdgeInsets.all(8.0),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.check_circle_outline, color: Colors.green, size: 20),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          _successMessage!,
+                          style: const TextStyle(color: Colors.green, fontSize: 13, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.close, size: 16, color: Colors.green),
+                        onPressed: () => setState(() => _successMessage = null),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                      )
+                    ],
+                  ),
+                ),
+
               // --- 入力エリア ---
               Padding(
                 padding: const EdgeInsets.all(16.0),
@@ -525,7 +600,7 @@ class _ShareModalContentState extends State<_ShareModalContent> {
                       child: TextField(
                         controller: _emailController,
                         decoration: InputDecoration(
-                          labelText: 'メールアドレスを追加',
+                          labelText: 'メールアドレスを入力',
                           border: const OutlineInputBorder(),
                           contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                           isDense: true,
@@ -535,8 +610,12 @@ class _ShareModalContentState extends State<_ShareModalContent> {
                         keyboardType: TextInputType.emailAddress,
                         onChanged: (_) {
                           // 入力し直したらエラーを消す
-                          if (_errorText != null) {
-                            setState(() => _errorText = null);
+                          if (_errorText != null || _generalError != null|| _successMessage != null) {
+                            setState(() { 
+                              _errorText = null;
+                              _generalError = null;  
+                              _successMessage = null;
+                            });
                           }
                         },
                       ),
@@ -555,6 +634,8 @@ class _ShareModalContentState extends State<_ShareModalContent> {
                         setState(() {
                           _isLoading = true;
                           _errorText = null;
+                          _generalError = null;
+                          _successMessage = null;
                         });
 
                         try {
@@ -588,12 +669,8 @@ class _ShareModalContentState extends State<_ShareModalContent> {
                           // 成功時の処理
                           _emailController.clear();
                           setState(() => _isLoading = false);
+                          _setSuccessMessage('$email に共有しました');
 
-                          if (mounted) {
-                            ScaffoldMessenger.of(context).showSnackBar(
-                              const SnackBar(content: Text('追加しました')),
-                            );
-                          }
                         } catch (e) {
                           // サーバーからのエラーを表示
                           _setError(e.toString().replaceAll("Exception: ", ""));
@@ -606,7 +683,7 @@ class _ShareModalContentState extends State<_ShareModalContent> {
                       ),
                       child: _isLoading
                           ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                          : const Text('追加'),
+                          : const Text('共有'),
                     ),
                   ],
                 ),
@@ -672,21 +749,13 @@ class _ShareModalContentState extends State<_ShareModalContent> {
 
                                 // 削除処理実行
                                 try {
-                                  // ローディング表示などを入れたい場合はState変数を用意してください
+                                  setState(() => _generalError = null);
                                   await _shareService.unshareRecording(widget.recordingId, userEmail);
                                   
-                                  if (mounted) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(content: Text('共有を解除しました')),
-                                    );
-                                  }
+                                  _setSuccessMessage('共有を解除しました');
                                 } catch (e) {
                                   if (mounted) {
-                                    // エラー表示 (前回作った _setError ヘルパーがあればそれを使う)
-                                    // なければ SnackBar や Dialog で
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      SnackBar(content: Text(e.toString()), backgroundColor: Colors.red),
-                                    );
+                                    _setGeneralError(e.toString().replaceAll("Exception: ", ""));
                                   }
                                 }
                               },
