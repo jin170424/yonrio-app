@@ -217,18 +217,27 @@ class RecordingRepository {
             .findFirst();
 
           List<SharedUser>? sharedWithList;
-          if (item['sharedWith'] != null) {
-            sharedWithList = (item['sharedWith'] as List).map((s) {
-              // JSONの中身がオブジェクトかID文字列かで分岐
+          final rawShared = item['sharedWith'];
+          if (rawShared != null) {
+            print("Cloud SharedWith Data [$remoteId]: $rawShared");
+          }
+          if (rawShared != null && rawShared is List) {
+            sharedWithList = rawShared.map((s) {
+              // 新しい形式 (Map) {"userId": "...", "name": "..."}
               if (s is Map) {
                 return SharedUser()
-                  ..userId = s['userId']
-                  ..name = s['name'];
-              } else {
-                // 文字列だけのリストだった場合のフォールバック
-                return SharedUser()..userId = s.toString();
+                  ..userId = s['userId']?.toString() // null対応
+                  ..name = s['name']?.toString();    // null対応
+              } 
+              // 古い形式 (Stringのみ) "email@example.com"
+              else {
+                return SharedUser()
+                  ..userId = s.toString()
+                  ..name = null; // 名前はないのでnull
               }
             }).toList();
+          } else {
+            sharedWithList = [];
           }
 
           if (localRecording != null && localRecording.needsCloudUpdate) {
