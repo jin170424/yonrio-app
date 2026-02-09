@@ -224,35 +224,67 @@ class _ResultScreenState extends State<ResultScreen> {
     }
   }
 
+  List<TranscriptSegment> _cachedSegments = [];
+
+  void _prepareSegments() {
+    if (_cachedSegments.isEmpty) {
+      final list = widget.recording.transcripts.toList();
+      list.sort((a, b) => a.startTimeMs.compareTo(b.startTimeMs));
+      _cachedSegments = list;
+    }
+  }
+
   void _setupAudioListeners() {
+    _prepareSegments();
     _audioPlayer.positionStream.listen((p) {
-      if (mounted) setState(() => _position = p);
         // --- ここから追加したスクロール命令 ---
+        if (!mounted) return;
+        if (_currentMode != DisplayMode.transcription) return;
         if (!_isUserScrolling){
           final ms = p.inMilliseconds;
-          final segments = widget.recording.transcripts.toList();
-          segments.sort((a, b) => a.startTimeMs.compareTo(b.startTimeMs));
+          if (_cachedSegments.isEmpty) _prepareSegments();
+          // final segments = widget.recording.transcripts.toList();
+          // segments.sort((a, b) => a.startTimeMs.compareTo(b.startTimeMs));
 
-          int activeIndex = segments.lastIndexWhere((s) => ms >= s.startTimeMs);
+          int activeIndex = _cachedSegments.lastIndexWhere((s) => ms >= s.startTimeMs);
 
           // if (activeIndex != -1 && _scrollController.hasClients) {
-          if (activeIndex != -1 && activeIndex != _lastAutoScrolledIndex) {
-            _lastAutoScrolledIndex = activeIndex;
+          // if (activeIndex != -1 && activeIndex != _lastAutoScrolledIndex) {
           //   if (_scrollController.hasClients) {
           //     _scrollController.animateTo(
           //       activeIndex * 120.0, 
           //       duration: const Duration(milliseconds: 300),
           //       curve: Curves.easeInOut,
           //     );
-            _itemScrollController.scrollTo(
-              index: activeIndex, // 何番目の行か指定
-              duration: const Duration(milliseconds: 300),
-              curve: Curves.easeInOut,
-              alignment: 0.1,
-            );
+
+          if (ms > 100000 && ms < 105000) {
+            print("⏱️ Time: $ms ms | Index: $activeIndex (前回: $_lastAutoScrolledIndex)");
+            if (activeIndex != -1) {
+              print("   Target: ${_cachedSegments[activeIndex].text}");
+            }
+          }
+
+            if (activeIndex != -1 && activeIndex != _lastAutoScrolledIndex) {
+              
+              
+              if (_itemScrollController.isAttached) {
+                try {
+                  _itemScrollController.scrollTo(
+                    index: activeIndex,
+                    duration: const Duration(milliseconds: 300),
+                    curve: Curves.easeInOut,
+                    alignment: 0.1, 
+                  );
+                  _lastAutoScrolledIndex = activeIndex;
+                } catch (e) {
+                  print("❌ スクロールエラー: $e");
+                }
+            } else {
+              // デタッチされている場合は、無理に実行せず、ログも出さない（あるいは1回だけ出す）
+              // print("⚠️ Controllerがデタッチされています - スキップ");
+            }
           }
         }
-        // --- ここまで ---
     });
 
     _audioPlayer.durationStream.listen((d) {
@@ -981,16 +1013,17 @@ Future<void> s3Upload(String title) async {
           // 5秒後にフラグオフ、自動スクロール開始
           _scrollResumeTimer = Timer(const Duration(seconds: 5), () {
             if (mounted) {
-              setState(() {
+              // setState(() {
                 _isUserScrolling = false;
                 _lastAutoScrolledIndex = -1;
-              });
+              // });
             }
           });
         }
         return false;
       },
       child: ScrollablePositionedList.builder(
+        key: const PageStorageKey('transcription_list'),
         itemScrollController: _itemScrollController, // コントローラーセット
         itemPositionsListener: _itemPositionsListener, // リスナーセット
         itemCount: segments.length,
@@ -1259,6 +1292,11 @@ Future<void> s3Upload(String title) async {
           return const Scaffold(body: Center(child: Text('データが見つかりません')));
         }
 
+        // 追加
+        final sortedSegments = recording.transcripts.toList()
+          ..sort((a, b) => a.startTimeMs.compareTo(b.startTimeMs));
+        _cachedSegments = sortedSegments;
+
         // // 表示するテキストの決定
         // String displayText;
         // if (_currentMode == DisplayMode.summary){
@@ -1363,14 +1401,35 @@ Future<void> s3Upload(String title) async {
                                 onPressed: _togglePlay,
                               ),
                               Expanded(
-                                child: Slider(
-                                  min: 0,
-                                  max: _duration.inMilliseconds.toDouble(),
-                                  value: _position.inMilliseconds.toDouble().clamp(0, _duration.inMilliseconds.toDouble()),
-                                  onChanged: (value) {
-                                    _audioPlayer.seek(Duration(milliseconds: value.toInt()));
-                                  },
-                                ),
+                                // child: Slider(
+                                //   min: 0,
+                                //   max: _duration.inMilliseconds.toDouble(),
+                                //   value: _position.inMilliseconds.toDouble().clamp(0, _duration.inMilliseconds.toDouble()),
+                                //   onChanged: (value) {
+                                //     _audioPlayer.seek(Duration(milliseconds: value.toInt()));
+                                //   },
+                                // ),
+                                // 自動スクロールがずれるので以下に修正
+                                child: StreamBuilder<Duration>(
+                                stream: _audioPlayer.positionStream,
+                                builder: (context, snapshot) {
+                                  final position = snapshot.data ?? Duration.zero;
+                                  final currentPos = position.inMilliseconds.toDouble();
+                                  final maxDuration = _duration.inMilliseconds.toDouble();
+                                  
+                                  // スライダーの値がDurationを超えないように安全策
+                                  final sliderValue = currentPos.clamp(0.0, maxDuration > 0 ? maxDuration : 0.0);
+
+                                  return Slider(
+                                    min: 0,
+                                    max: maxDuration > 0 ? maxDuration : 1.0, // 0除算回避
+                                    value: sliderValue,
+                                    onChanged: (value) {
+                                      _audioPlayer.seek(Duration(milliseconds: value.toInt()));
+                                    },
+                                  );
+                                }
+                              ),
                               ),
                             ],
                           ),
@@ -1379,7 +1438,11 @@ Future<void> s3Upload(String title) async {
                             child: Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                Text(_formatDuration(_position)),
+                                // Text(_formatDuration(_position)),
+                                StreamBuilder<Duration>(
+                                  stream: _audioPlayer.positionStream,
+                                  builder: (context, snapshot) => Text(_formatDuration(snapshot.data ?? Duration.zero)),
+                                ),
                                 Text(_formatDuration(_duration)),
                               ],
                             ),

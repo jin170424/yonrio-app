@@ -149,6 +149,8 @@ class RecordingRepository {
           if (newSegments.isNotEmpty){
             await isar.transcriptSegments.putAll(newSegments);
 
+            targetRecording.transcripts.clear();
+
             // 親リンクも保存
             targetRecording.transcripts.addAll(newSegments);
             await targetRecording.transcripts.save();
