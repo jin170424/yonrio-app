@@ -135,7 +135,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   if (isar != null) {
                     await isar.writeTxn(() async {
                       recording.title = newTitle;
-                      recording.updatedAt = DateTime.now();
+                      recording.updatedAt = DateTime.now().toUtc();
                       recording.needsCloudUpdate = true;
                       await isar.recordings.put(recording);
                     });
@@ -580,15 +580,15 @@ class _HomeScreenState extends State<HomeScreen> {
              tooltip: "ファイルをインポート",
              onPressed: _importFile,
           ),
-          IconButton(
-            icon: const Icon(Icons.share),
-            tooltip: "リストを共有",
-            onPressed: () {
-               ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('リスト全体の共有機能は開発中です')),
-                );
-            },
-          ),
+          // IconButton(
+          //   icon: const Icon(Icons.share),
+          //   tooltip: "リストを共有",
+          //   onPressed: () {
+          //      ScaffoldMessenger.of(context).showSnackBar(
+          //         const SnackBar(content: Text('リスト全体の共有機能は開発中です')),
+          //       );
+          //   },
+          // ),
           IconButton(
             icon: const Icon(Icons.logout),
             tooltip: "ログアウト",
@@ -650,7 +650,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         leading: Icon(leadIcon, color: iconColor),
                         title: Text(recording.title),
                         subtitle: Text(
-                          DateFormat('yyyy/MM/dd HH:mm').format(recording.createdAt)
+                          DateFormat('yyyy/MM/dd HH:mm').format(recording.createdAt.toLocal())
                         ),
                         trailing: const Icon(Icons.chevron_right),
                         onTap: () {

@@ -47,64 +47,75 @@ const RecordingSchema = CollectionSchema(
       name: r'needsCloudUpdate',
       type: IsarType.bool,
     ),
-    r'ownerId': PropertySchema(
+    r'originalLanguage': PropertySchema(
       id: 6,
+      name: r'originalLanguage',
+      type: IsarType.string,
+    ),
+    r'ownerId': PropertySchema(
+      id: 7,
       name: r'ownerId',
       type: IsarType.string,
     ),
     r'ownerName': PropertySchema(
-      id: 7,
+      id: 8,
       name: r'ownerName',
       type: IsarType.string,
     ),
     r'remoteId': PropertySchema(
-      id: 8,
+      id: 9,
       name: r'remoteId',
       type: IsarType.string,
     ),
     r's3AudioUrl': PropertySchema(
-      id: 9,
+      id: 10,
       name: r's3AudioUrl',
       type: IsarType.string,
     ),
     r's3TranscriptJsonUrl': PropertySchema(
-      id: 10,
+      id: 11,
       name: r's3TranscriptJsonUrl',
       type: IsarType.string,
     ),
     r'sharedWith': PropertySchema(
-      id: 11,
+      id: 12,
       name: r'sharedWith',
       type: IsarType.objectList,
       target: r'SharedUser',
     ),
     r'sourceOriginalId': PropertySchema(
-      id: 12,
+      id: 13,
       name: r'sourceOriginalId',
       type: IsarType.string,
     ),
     r'status': PropertySchema(
-      id: 13,
+      id: 14,
       name: r'status',
       type: IsarType.string,
     ),
     r'summary': PropertySchema(
-      id: 14,
+      id: 15,
       name: r'summary',
       type: IsarType.string,
     ),
+    r'summaryTranslations': PropertySchema(
+      id: 16,
+      name: r'summaryTranslations',
+      type: IsarType.objectList,
+      target: r'TranslationData',
+    ),
     r'title': PropertySchema(
-      id: 15,
+      id: 17,
       name: r'title',
       type: IsarType.string,
     ),
     r'transcription': PropertySchema(
-      id: 16,
+      id: 18,
       name: r'transcription',
       type: IsarType.string,
     ),
     r'updatedAt': PropertySchema(
-      id: 17,
+      id: 19,
       name: r'updatedAt',
       type: IsarType.dateTime,
     )
@@ -202,7 +213,10 @@ const RecordingSchema = CollectionSchema(
       single: false,
     )
   },
-  embeddedSchemas: {r'SharedUser': SharedUserSchema},
+  embeddedSchemas: {
+    r'TranslationData': TranslationDataSchema,
+    r'SharedUser': SharedUserSchema
+  },
   getId: _recordingGetId,
   getLinks: _recordingGetLinks,
   attach: _recordingAttach,
@@ -216,6 +230,12 @@ int _recordingEstimateSize(
 ) {
   var bytesCount = offsets.last;
   bytesCount += 3 + object.filePath.length * 3;
+  {
+    final value = object.originalLanguage;
+    if (value != null) {
+      bytesCount += 3 + value.length * 3;
+    }
+  }
   {
     final value = object.ownerId;
     if (value != null) {
@@ -273,6 +293,20 @@ int _recordingEstimateSize(
       bytesCount += 3 + value.length * 3;
     }
   }
+  {
+    final list = object.summaryTranslations;
+    if (list != null) {
+      bytesCount += 3 + list.length * 3;
+      {
+        final offsets = allOffsets[TranslationData]!;
+        for (var i = 0; i < list.length; i++) {
+          final value = list[i];
+          bytesCount +=
+              TranslationDataSchema.estimateSize(value, offsets, allOffsets);
+        }
+      }
+    }
+  }
   bytesCount += 3 + object.title.length * 3;
   {
     final value = object.transcription;
@@ -295,23 +329,30 @@ void _recordingSerialize(
   writer.writeDateTime(offsets[3], object.lastSyncTime);
   writer.writeBool(offsets[4], object.needsCloudDelete);
   writer.writeBool(offsets[5], object.needsCloudUpdate);
-  writer.writeString(offsets[6], object.ownerId);
-  writer.writeString(offsets[7], object.ownerName);
-  writer.writeString(offsets[8], object.remoteId);
-  writer.writeString(offsets[9], object.s3AudioUrl);
-  writer.writeString(offsets[10], object.s3TranscriptJsonUrl);
+  writer.writeString(offsets[6], object.originalLanguage);
+  writer.writeString(offsets[7], object.ownerId);
+  writer.writeString(offsets[8], object.ownerName);
+  writer.writeString(offsets[9], object.remoteId);
+  writer.writeString(offsets[10], object.s3AudioUrl);
+  writer.writeString(offsets[11], object.s3TranscriptJsonUrl);
   writer.writeObjectList<SharedUser>(
-    offsets[11],
+    offsets[12],
     allOffsets,
     SharedUserSchema.serialize,
     object.sharedWith,
   );
-  writer.writeString(offsets[12], object.sourceOriginalId);
-  writer.writeString(offsets[13], object.status);
-  writer.writeString(offsets[14], object.summary);
-  writer.writeString(offsets[15], object.title);
-  writer.writeString(offsets[16], object.transcription);
-  writer.writeDateTime(offsets[17], object.updatedAt);
+  writer.writeString(offsets[13], object.sourceOriginalId);
+  writer.writeString(offsets[14], object.status);
+  writer.writeString(offsets[15], object.summary);
+  writer.writeObjectList<TranslationData>(
+    offsets[16],
+    allOffsets,
+    TranslationDataSchema.serialize,
+    object.summaryTranslations,
+  );
+  writer.writeString(offsets[17], object.title);
+  writer.writeString(offsets[18], object.transcription);
+  writer.writeDateTime(offsets[19], object.updatedAt);
 }
 
 Recording _recordingDeserialize(
@@ -328,23 +369,30 @@ Recording _recordingDeserialize(
   object.lastSyncTime = reader.readDateTimeOrNull(offsets[3]);
   object.needsCloudDelete = reader.readBool(offsets[4]);
   object.needsCloudUpdate = reader.readBool(offsets[5]);
-  object.ownerId = reader.readStringOrNull(offsets[6]);
-  object.ownerName = reader.readString(offsets[7]);
-  object.remoteId = reader.readStringOrNull(offsets[8]);
-  object.s3AudioUrl = reader.readStringOrNull(offsets[9]);
-  object.s3TranscriptJsonUrl = reader.readStringOrNull(offsets[10]);
+  object.originalLanguage = reader.readStringOrNull(offsets[6]);
+  object.ownerId = reader.readStringOrNull(offsets[7]);
+  object.ownerName = reader.readString(offsets[8]);
+  object.remoteId = reader.readStringOrNull(offsets[9]);
+  object.s3AudioUrl = reader.readStringOrNull(offsets[10]);
+  object.s3TranscriptJsonUrl = reader.readStringOrNull(offsets[11]);
   object.sharedWith = reader.readObjectList<SharedUser>(
-    offsets[11],
+    offsets[12],
     SharedUserSchema.deserialize,
     allOffsets,
     SharedUser(),
   );
-  object.sourceOriginalId = reader.readStringOrNull(offsets[12]);
-  object.status = reader.readStringOrNull(offsets[13]);
-  object.summary = reader.readStringOrNull(offsets[14]);
-  object.title = reader.readString(offsets[15]);
-  object.transcription = reader.readStringOrNull(offsets[16]);
-  object.updatedAt = reader.readDateTime(offsets[17]);
+  object.sourceOriginalId = reader.readStringOrNull(offsets[13]);
+  object.status = reader.readStringOrNull(offsets[14]);
+  object.summary = reader.readStringOrNull(offsets[15]);
+  object.summaryTranslations = reader.readObjectList<TranslationData>(
+    offsets[16],
+    TranslationDataSchema.deserialize,
+    allOffsets,
+    TranslationData(),
+  );
+  object.title = reader.readString(offsets[17]);
+  object.transcription = reader.readStringOrNull(offsets[18]);
+  object.updatedAt = reader.readDateTime(offsets[19]);
   return object;
 }
 
@@ -370,31 +418,40 @@ P _recordingDeserializeProp<P>(
     case 6:
       return (reader.readStringOrNull(offset)) as P;
     case 7:
-      return (reader.readString(offset)) as P;
-    case 8:
       return (reader.readStringOrNull(offset)) as P;
+    case 8:
+      return (reader.readString(offset)) as P;
     case 9:
       return (reader.readStringOrNull(offset)) as P;
     case 10:
       return (reader.readStringOrNull(offset)) as P;
     case 11:
+      return (reader.readStringOrNull(offset)) as P;
+    case 12:
       return (reader.readObjectList<SharedUser>(
         offset,
         SharedUserSchema.deserialize,
         allOffsets,
         SharedUser(),
       )) as P;
-    case 12:
-      return (reader.readStringOrNull(offset)) as P;
     case 13:
       return (reader.readStringOrNull(offset)) as P;
     case 14:
       return (reader.readStringOrNull(offset)) as P;
     case 15:
-      return (reader.readString(offset)) as P;
-    case 16:
       return (reader.readStringOrNull(offset)) as P;
+    case 16:
+      return (reader.readObjectList<TranslationData>(
+        offset,
+        TranslationDataSchema.deserialize,
+        allOffsets,
+        TranslationData(),
+      )) as P;
     case 17:
+      return (reader.readString(offset)) as P;
+    case 18:
+      return (reader.readStringOrNull(offset)) as P;
+    case 19:
       return (reader.readDateTime(offset)) as P;
     default:
       throw IsarError('Unknown property with id $propertyId');
@@ -1569,6 +1626,160 @@ extension RecordingQueryFilter
       return query.addFilterCondition(FilterCondition.equalTo(
         property: r'needsCloudUpdate',
         value: value,
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterFilterCondition>
+      originalLanguageIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNull(
+        property: r'originalLanguage',
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterFilterCondition>
+      originalLanguageIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNotNull(
+        property: r'originalLanguage',
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterFilterCondition>
+      originalLanguageEqualTo(
+    String? value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'originalLanguage',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterFilterCondition>
+      originalLanguageGreaterThan(
+    String? value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        include: include,
+        property: r'originalLanguage',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterFilterCondition>
+      originalLanguageLessThan(
+    String? value, {
+    bool include = false,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.lessThan(
+        include: include,
+        property: r'originalLanguage',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterFilterCondition>
+      originalLanguageBetween(
+    String? lower,
+    String? upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.between(
+        property: r'originalLanguage',
+        lower: lower,
+        includeLower: includeLower,
+        upper: upper,
+        includeUpper: includeUpper,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterFilterCondition>
+      originalLanguageStartsWith(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.startsWith(
+        property: r'originalLanguage',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterFilterCondition>
+      originalLanguageEndsWith(
+    String value, {
+    bool caseSensitive = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.endsWith(
+        property: r'originalLanguage',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterFilterCondition>
+      originalLanguageContains(String value, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.contains(
+        property: r'originalLanguage',
+        value: value,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterFilterCondition>
+      originalLanguageMatches(String pattern, {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.matches(
+        property: r'originalLanguage',
+        wildcard: pattern,
+        caseSensitive: caseSensitive,
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterFilterCondition>
+      originalLanguageIsEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'originalLanguage',
+        value: '',
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterFilterCondition>
+      originalLanguageIsNotEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.greaterThan(
+        property: r'originalLanguage',
+        value: '',
       ));
     });
   }
@@ -2858,6 +3069,113 @@ extension RecordingQueryFilter
     });
   }
 
+  QueryBuilder<Recording, Recording, QAfterFilterCondition>
+      summaryTranslationsIsNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNull(
+        property: r'summaryTranslations',
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterFilterCondition>
+      summaryTranslationsIsNotNull() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(const FilterCondition.isNotNull(
+        property: r'summaryTranslations',
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterFilterCondition>
+      summaryTranslationsLengthEqualTo(int length) {
+    return QueryBuilder.apply(this, (query) {
+      return query.listLength(
+        r'summaryTranslations',
+        length,
+        true,
+        length,
+        true,
+      );
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterFilterCondition>
+      summaryTranslationsIsEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.listLength(
+        r'summaryTranslations',
+        0,
+        true,
+        0,
+        true,
+      );
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterFilterCondition>
+      summaryTranslationsIsNotEmpty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.listLength(
+        r'summaryTranslations',
+        0,
+        false,
+        999999,
+        true,
+      );
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterFilterCondition>
+      summaryTranslationsLengthLessThan(
+    int length, {
+    bool include = false,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.listLength(
+        r'summaryTranslations',
+        0,
+        true,
+        length,
+        include,
+      );
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterFilterCondition>
+      summaryTranslationsLengthGreaterThan(
+    int length, {
+    bool include = false,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.listLength(
+        r'summaryTranslations',
+        length,
+        include,
+        999999,
+        true,
+      );
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterFilterCondition>
+      summaryTranslationsLengthBetween(
+    int lower,
+    int upper, {
+    bool includeLower = true,
+    bool includeUpper = true,
+  }) {
+    return QueryBuilder.apply(this, (query) {
+      return query.listLength(
+        r'summaryTranslations',
+        lower,
+        includeLower,
+        upper,
+        includeUpper,
+      );
+    });
+  }
+
   QueryBuilder<Recording, Recording, QAfterFilterCondition> titleEqualTo(
     String value, {
     bool caseSensitive = true,
@@ -3205,6 +3523,13 @@ extension RecordingQueryObject
       return query.object(q, r'sharedWith');
     });
   }
+
+  QueryBuilder<Recording, Recording, QAfterFilterCondition>
+      summaryTranslationsElement(FilterQuery<TranslationData> q) {
+    return QueryBuilder.apply(this, (query) {
+      return query.object(q, r'summaryTranslations');
+    });
+  }
 }
 
 extension RecordingQueryLinks
@@ -3343,6 +3668,19 @@ extension RecordingQuerySortBy on QueryBuilder<Recording, Recording, QSortBy> {
       sortByNeedsCloudUpdateDesc() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'needsCloudUpdate', Sort.desc);
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterSortBy> sortByOriginalLanguage() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'originalLanguage', Sort.asc);
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterSortBy>
+      sortByOriginalLanguageDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'originalLanguage', Sort.desc);
     });
   }
 
@@ -3569,6 +3907,19 @@ extension RecordingQuerySortThenBy
     });
   }
 
+  QueryBuilder<Recording, Recording, QAfterSortBy> thenByOriginalLanguage() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'originalLanguage', Sort.asc);
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterSortBy>
+      thenByOriginalLanguageDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'originalLanguage', Sort.desc);
+    });
+  }
+
   QueryBuilder<Recording, Recording, QAfterSortBy> thenByOwnerId() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'ownerId', Sort.asc);
@@ -3743,6 +4094,14 @@ extension RecordingQueryWhereDistinct
     });
   }
 
+  QueryBuilder<Recording, Recording, QDistinct> distinctByOriginalLanguage(
+      {bool caseSensitive = true}) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'originalLanguage',
+          caseSensitive: caseSensitive);
+    });
+  }
+
   QueryBuilder<Recording, Recording, QDistinct> distinctByOwnerId(
       {bool caseSensitive = true}) {
     return QueryBuilder.apply(this, (query) {
@@ -3867,6 +4226,13 @@ extension RecordingQueryProperty
     });
   }
 
+  QueryBuilder<Recording, String?, QQueryOperations>
+      originalLanguageProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'originalLanguage');
+    });
+  }
+
   QueryBuilder<Recording, String?, QQueryOperations> ownerIdProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'ownerId');
@@ -3921,6 +4287,13 @@ extension RecordingQueryProperty
   QueryBuilder<Recording, String?, QQueryOperations> summaryProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'summary');
+    });
+  }
+
+  QueryBuilder<Recording, List<TranslationData>?, QQueryOperations>
+      summaryTranslationsProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'summaryTranslations');
     });
   }
 

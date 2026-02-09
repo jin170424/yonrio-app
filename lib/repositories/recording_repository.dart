@@ -85,6 +85,23 @@ class RecordingRepository {
         }
         fetchedSummary = decoded['summary'] as String?;
         fetchedTranscription = decoded['full_transcript'] as String?;
+
+        if (decoded['detectedLanguage'] != null) {
+          targetRecording.originalLanguage = decoded['detectedLanguage'];
+        }
+
+        // 要約の翻訳データを取得
+        final rawSumTrans = decoded['summaryTranslations'];
+        if (rawSumTrans != null && rawSumTrans is List) {
+          targetRecording.summaryTranslations = rawSumTrans.map((t) {
+            if (t is Map<String, dynamic>) {
+                return TranslationData()
+                  ..langCode = t['langCode']
+                  ..text = t['text'];
+            }
+            return TranslationData()..text = "";
+          }).toList();
+        }
       } else {
         throw Exception("不明なJSON形式です: ${decoded.runtimeType}");
       }
@@ -265,9 +282,9 @@ class RecordingRepository {
             ..s3AudioUrl = item['s3AudioUrl']
             ..s3TranscriptJsonUrl = item['s3TranscriptJsonUrl']
             ..ownerName = item['ownerName'] ?? localRecording.ownerName
-            ..createdAt = DateTime.tryParse(item['createdAt'] ?? '') ?? DateTime.now()
-            ..updatedAt = DateTime.now()
-            ..lastSyncTime = DateTime.now()
+            ..createdAt = DateTime.tryParse(item['createdAt'] ?? '')?.toUtc() ?? DateTime.now().toUtc()
+            ..updatedAt = DateTime.now().toUtc()
+            ..lastSyncTime = DateTime.now().toUtc()
             ..sourceOriginalId = item['sourceOriginalId']
             ..sharedWith = sharedWithList;
           
@@ -294,7 +311,7 @@ class RecordingRepository {
         .ownerIdEqualTo(currentUserId)
         .remoteIdIsNotNull()
         // .sourceOriginalIdIsNotNull() // 自分の未アップロードデータを守る
-        .needsCloudUpdateEqualTo(false) // ★追加: アップロード待ちのデータは消さないように保護
+        .needsCloudUpdateEqualTo(false) // アップロード待ちのデータは消さないように保護
         .needsCloudDeleteEqualTo(false)
         .findAll();
 
@@ -350,8 +367,8 @@ class RecordingRepository {
       ..title = DateFormat('yyyy/MM/dd HH:mmの録音').format(DateTime.now())
       ..filePath = filePath
       ..durationSeconds = duration
-      ..createdAt = DateTime.now()
-      ..updatedAt = DateTime.now()
+      ..createdAt = DateTime.now().toUtc()
+      ..updatedAt = DateTime.now().toUtc()
       ..ownerName = ownerName
       ..ownerId = ownerId
       ..status = 'processing';

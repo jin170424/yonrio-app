@@ -57,6 +57,7 @@ class _ResultScreenState extends State<ResultScreen> {
   
   // 翻訳用言語マップ (HEAD由来)
   final Map<String, String> _supportedLanguages = {
+    'ja': '日本語',
     'en': '英語',
     'zh': '中国語(简体)',
     'zh-TW' : '中国語(繁體)',
@@ -83,6 +84,11 @@ class _ResultScreenState extends State<ResultScreen> {
   int _lastAutoScrolledIndex = -1;
 
   String? _currentUserId;
+
+  String _getLanguageName(String? code) {
+    if (code == null || code.isEmpty) return '原文';
+    return _supportedLanguages[code] ?? code; // マップになければコードをそのまま表示
+  }
 
   @override
   void initState() {
@@ -667,6 +673,7 @@ Future<void> s3Upload(String title) async {
     //   );
     //   return;
     // }
+    final String originName = _getLanguageName(recording.originalLanguage);
 
     showDialog(
       context: context,
@@ -679,13 +686,16 @@ Future<void> s3Upload(String title) async {
                 Navigator.pop(context);
                 _handleTranslationRequest('original', '原文');
               },
-              child: const Padding(
-                padding: EdgeInsets.symmetric(vertical: 8.0),
-                child: Text('原文を表示', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8.0),
+                child: Text('原文 ($originName)', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
               ),
             ),
             const Divider(),
             ..._supportedLanguages.entries.map((entry) {
+              if (entry.key == recording.originalLanguage) {
+                return const SizedBox.shrink(); 
+              }
               return SimpleDialogOption(
                 onPressed: () {
                   Navigator.pop(context);
@@ -703,7 +713,8 @@ Future<void> s3Upload(String title) async {
     );
   }
 
-  Future<void> _showSegmentTranslationDialog(int index) async {
+  Future<void> _showSegmentTranslationDialog(int index, Recording recording) async {
+    final String originName = _getLanguageName(recording.originalLanguage);
     showDialog(
       context: context,
       builder:(context) {
@@ -722,6 +733,9 @@ Future<void> s3Upload(String title) async {
             ),
             const Divider(),
             ..._supportedLanguages.entries.map((entry) {
+              if (entry.key == recording.originalLanguage) {
+                return const SizedBox.shrink(); 
+              }
               return SimpleDialogOption(
                 onPressed: () {
                   Navigator.pop(context);
@@ -1091,7 +1105,7 @@ Future<void> s3Upload(String title) async {
                       constraints: const BoxConstraints(),
                       padding: EdgeInsets.zero,
                       tooltip: "この行を翻訳",
-                      onPressed: () => _showSegmentTranslationDialog(index),
+                      onPressed: () => _showSegmentTranslationDialog(index, recording),
                     ),
 
                     const Spacer(),
@@ -1189,7 +1203,30 @@ Future<void> s3Upload(String title) async {
   Widget _buildSummaryView(Recording recording) {
     final hasSummary = recording.summary != null && recording.summary!.isNotEmpty;
     final displayText = hasSummary ? recording.summary! : "要約はまだありません（同期中または生成待ち）";
-            
+    
+    final String currentLang = _currentDisplayLanguage;
+    final bool isTranslateMode = currentLang != 'original';
+
+    String contentText = "";
+
+    if (isTranslateMode) {
+      // 翻訳データを探す
+      final translation = recording.summaryTranslations?.firstWhere(
+        (t) => t.langCode == currentLang,
+        orElse: () => TranslationData(), // 見つからない場合
+      );
+
+      if (translation != null && translation.text != null && translation.text!.isNotEmpty) {
+        contentText = translation.text!;
+      } else {
+        // 翻訳データがまだ無い場合（原文フォールバック + 注釈）
+        contentText = "${recording.summary ?? '要約なし'}\n\n(※この言語の要約翻訳はまだありません)";
+      }
+    } else {
+      // 原文
+      contentText = recording.summary ?? "要約はまだありません（同期中または生成待ち）";
+    }
+
     return SingleChildScrollView(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.end,
@@ -1268,7 +1305,7 @@ Future<void> s3Upload(String title) async {
                   ],
                 )
               : Text(
-                displayText,
+                contentText,
                 style: const TextStyle(fontSize: 16, height: 1.5),
               ),
             ),

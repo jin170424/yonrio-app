@@ -56,6 +56,9 @@ class Recording {
 
   // AI要約
   String? summary;
+  List<TranslationData>? summaryTranslations;
+
+  String? originalLanguage;
 
   DateTime? lastSyncTime;
 
