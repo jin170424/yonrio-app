@@ -26,7 +26,9 @@ enum DisplayMode { transcription, summary }
 class ResultScreen extends StatefulWidget {
   final Recording recording;
 
-  const ResultScreen({super.key, required this.recording});
+  final String? searchKeyword;
+
+  const ResultScreen({super.key, required this.recording, this.searchKeyword});
 
   @override
   State<ResultScreen> createState() => _ResultScreenState();
@@ -35,6 +37,11 @@ class ResultScreen extends StatefulWidget {
 class _ResultScreenState extends State<ResultScreen> {
   final GeminiService _geminiService = GeminiService();
   late final RecordingRepository _repository;
+  bool _hasSearchedAndScrolled = false;
+
+  final TextEditingController _localSearchController = TextEditingController();
+  String _currentSearchKeyword = ''; 
+  bool _isSearchBarVisible = false;
 
   // 再生スクロールのためのコントローラー
   // final ScrollController _scrollController = ScrollController();
@@ -81,38 +88,41 @@ class _ResultScreenState extends State<ResultScreen> {
   Timer? _scrollResumeTimer;
   int _lastAutoScrolledIndex = -1;
 
+  
+
   @override
   void initState() {
     super.initState();
-    final isar = Isar.getInstance(); // main.dart等で確保されている前提
+    final isar = Isar.getInstance(); 
     if (isar != null) {
       final dio = Dio();
       _repository = RecordingRepository(isar: isar, dio: dio);
-      // ストリームセットアップ
       _recordingStream = isar.recordings.watchObject(widget.recording.id, fireImmediately: true);
     }
     
-    // 画像判定 (HEAD由来)
-    final path = widget.recording.filePath.toLowerCase();
-    _isImage = path.endsWith('.jpg') || path.endsWith('.jpeg') || path.endsWith('.png');
+    // ホーム画面から検索ワードが渡されていた場合の処理
+    if (widget.searchKeyword != null && widget.searchKeyword!.isNotEmpty) {
+      _currentSearchKeyword = widget.searchKeyword!;
+      _localSearchController.text = widget.searchKeyword!;
+      _isSearchBarVisible = true; // 最初から検索バーを開く
+    }
 
-    // プレイヤー初期化 (HEAD由来)
+    // ★重要: これがないと検索が動きません！
+    _localSearchController.addListener(() {
+      setState(() {
+        _currentSearchKeyword = _localSearchController.text;
+        _hasSearchedAndScrolled = false; // 文字が変わったら再スクロールできるようにリセット
+      });
+    });
+    
+    final path = widget.recording.filePath.toLowerCase();
+    _isImage = path.endsWith('.jpg') || path.endsWith('.jpeg') || path.endsWith('.png') || path.endsWith('.heic');
+
     if (!_isImage) {
       _initAudioPlayer();
     }
-
-    // 自動同期 (Main由来)
+    
     _autoSyncIfNeeded();
-  }
-
-  @override
-  void dispose() {
-    _audioPlayer.dispose();
-    _editController.dispose();
-    _summaryController.dispose();
-    // _scrollController.dispose();
-    _scrollResumeTimer?.cancel();
-    super.dispose();
   }
 
   // --- Audio Player Logic (HEAD由来) ---
@@ -313,6 +323,104 @@ class _ResultScreenState extends State<ResultScreen> {
         print("バックグラウンド同期失敗 (無視可): $e");
       }
     });
+
+    List<TextSpan> _buildHighlightedText(String text, String? keyword) {
+    if (keyword == null || keyword.isEmpty) {
+      return [TextSpan(text: text)]; // キーワードがなければそのまま表示
+    }
+
+    final List<TextSpan> spans = [];
+    final lowerText = text.toLowerCase();
+    final lowerKeyword = keyword.toLowerCase();
+    int start = 0;
+
+    while (true) {
+      final index = lowerText.indexOf(lowerKeyword, start);
+      if (index == -1) {
+        // 残りのテキストを追加して終了
+        spans.add(TextSpan(text: text.substring(start)));
+        break;
+      }
+
+      // ヒットした手前のテキスト
+      if (index > start) {
+        spans.add(TextSpan(text: text.substring(start, index)));
+      }
+
+      // ★ヒットしたテキスト（ここを黄色くハイライト！）
+      spans.add(TextSpan(
+        text: text.substring(index, index + keyword.length),
+        style: const TextStyle(
+          backgroundColor: Colors.yellow, // ハイライト色
+          color: Colors.black,
+          fontWeight: FontWeight.bold,
+        ),
+      ));
+
+      start = index + keyword.length;
+    }
+    return spans;
+  }
+  
+  void _executeSearchScroll(List<TranscriptSegment> segments) {
+    // 検索ワードが空、または既にスクロール済みの場合は何もしない
+    if (_hasSearchedAndScrolled || _currentSearchKeyword.isEmpty) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      // ★ここが修正ポイント！
+      // widget.searchKeyword (最初の値) ではなく、
+      // _currentSearchKeyword (今入力されている値) を使います。
+      final keyword = _currentSearchKeyword.toLowerCase(); 
+      
+      final index = segments.indexWhere((s) {
+         return s.text.toLowerCase().contains(keyword);
+      });
+
+      if (index != -1) {
+        if (_itemScrollController.isAttached) {
+          _itemScrollController.jumpTo(index: index, alignment: 0.1);
+        }
+      }
+      
+      // 見つかっても見つからなくても、一度処理したらフラグを立てる
+      if (mounted) {
+        setState(() { _hasSearchedAndScrolled = true; });
+      }
+    });
+  }
+
+  Widget _buildHeaderActionButton(Recording recording) {
+    final bool isUploaded = recording.remoteId != null;
+    
+    // 処理中ならグルグルを表示
+    if (_isUploading || _isLoading) {
+      return const Padding(
+        padding: EdgeInsets.all(16.0),
+        child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.grey)),
+      );
+    }
+
+    return IconButton(
+      tooltip: isUploaded ? '同期する' : 'クラウドへ保存',
+      icon: Icon(
+        isUploaded ? Icons.sync : Icons.cloud_upload,
+        color: isUploaded ? Colors.green : Colors.blue,
+      ),
+      onPressed: () {
+        runWithNetworkCheck(
+          context: context, 
+          action: () async {
+            if (isUploaded) {
+              await _manualSync(); // 既にクラウドにあるなら同期
+            } else {
+              await s3Upload(recording.title); // まだならアップロード
+            }
+          }
+        );
+      },
+    );
+  }
+
   }
 
   Future<void> _manualSync() async {
@@ -904,6 +1012,11 @@ Future<void> s3Upload(String title) async {
   Widget _buildTranscriptionList(Recording recording) {
     final segments = recording.transcripts.toList();
     segments.sort((a, b) => a.startTimeMs.compareTo(b.startTimeMs));
+    
+    if (segments.isNotEmpty && !_hasSearchedAndScrolled) {
+      _executeSearchScroll(segments);
+    }
+
     if (segments.isEmpty) {
       if (recording.remoteId != null) {
         return Center(
@@ -966,6 +1079,7 @@ Future<void> s3Upload(String title) async {
         return false;
       },
       child: ScrollablePositionedList.builder(
+        key: ValueKey(_currentSearchKeyword), // 検索ワード変更時にリビルド
         itemScrollController: _itemScrollController, // コントローラーセット
         itemPositionsListener: _itemPositionsListener, // リスナーセット
         itemCount: segments.length,
@@ -988,6 +1102,7 @@ Future<void> s3Upload(String title) async {
             }
           }
         return Padding(
+          key: ValueKey("${segment.id}_$_currentSearchKeyword"),
           padding: const EdgeInsets.symmetric(vertical: 8.0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1115,10 +1230,12 @@ Future<void> s3Upload(String title) async {
                       )
                     ],
                   )
-                : Text(
-                  displayText,
-                  style: const TextStyle(fontSize: 15, height: 1.4),
-                ),
+                : RichText(
+                        text: TextSpan(
+                          style: const TextStyle(fontSize: 15, height: 1.4, color: Colors.black),
+                          children: _buildHighlightedText(displayText, _currentSearchKeyword),
+                        ),
+                      ),
               ),
             ],
           ),
@@ -1219,220 +1336,268 @@ Future<void> s3Upload(String title) async {
     );
   }
 
-  @override
+  List<TextSpan> _buildHighlightedText(String text, String? keyword) {
+    if (keyword == null || keyword.isEmpty) {
+      return [TextSpan(text: text)];
+    }
+    final List<TextSpan> spans = [];
+    final lowerText = text.toLowerCase();
+    final lowerKeyword = keyword.toLowerCase();
+    int start = 0;
+    while (true) {
+      final index = lowerText.indexOf(lowerKeyword, start);
+      if (index == -1) {
+        spans.add(TextSpan(text: text.substring(start)));
+        break;
+      }
+      if (index > start) {
+        spans.add(TextSpan(text: text.substring(start, index)));
+      }
+      spans.add(TextSpan(
+        text: text.substring(index, index + keyword.length),
+        style: const TextStyle(backgroundColor: Colors.yellow, color: Colors.black, fontWeight: FontWeight.bold),
+      ));
+      start = index + keyword.length;
+    }
+    return spans;
+  }
+
+  // これも追加！
+  void _executeSearchScroll(List<TranscriptSegment> segments) {
+    // 検索ワードが空、または既にスクロール済みの場合は何もしない
+    if (_hasSearchedAndScrolled || _currentSearchKeyword.isEmpty) return;
+
+    // 画面の描画が終わった後に実行
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      // まだ画面があるか確認
+      if (!mounted) return;
+
+      final keyword = _currentSearchKeyword.toLowerCase();
+      print("検索実行: $keyword"); // ★デバッグ用ログ
+
+      // 検索ヒットする最初のインデックスを探す
+      final index = segments.indexWhere((s) {
+         return s.text.toLowerCase().contains(keyword);
+      });
+
+      if (index != -1) {
+        print("ヒットしました: $index行目"); // ★デバッグ用ログ
+        if (_itemScrollController.isAttached) {
+          _itemScrollController.jumpTo(index: index, alignment: 0.1);
+        }
+      } else {
+        print("見つかりませんでした"); // ★デバッグ用ログ
+      }
+      
+      // 処理が終わったらフラグを立てる（無限ループ防止）
+      if (mounted) {
+        setState(() { _hasSearchedAndScrolled = true; });
+      }
+    });
+  }
+
+  Widget _buildHeaderActionButton(Recording recording) {
+    final bool isUploaded = recording.remoteId != null;
+    
+    // 処理中ならグルグルを表示
+    if (_isUploading || _isLoading) {
+      return const Padding(
+        padding: EdgeInsets.all(16.0),
+        child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.grey)),
+      );
+    }
+
+    return IconButton(
+      tooltip: isUploaded ? '同期する' : 'クラウドへ保存',
+      icon: Icon(
+        isUploaded ? Icons.sync : Icons.cloud_upload,
+        color: isUploaded ? Colors.green : Colors.blue,
+      ),
+      onPressed: () {
+        runWithNetworkCheck(
+          context: context, 
+          action: () async {
+            if (isUploaded) {
+              await _manualSync(); // 既にクラウドにあるなら同期
+            } else {
+              await s3Upload(recording.title); // まだならアップロード
+            }
+          }
+        );
+      },
+    );
+  }
+
+@override
   Widget build(BuildContext context) {
-    // MainのStreamBuilder構造を採用
     return StreamBuilder<Recording?>(
       stream: _recordingStream, 
       builder: (context, snapshot){
-        if (!snapshot.hasData && snapshot.connectionState == ConnectionState.waiting){
-          return const Scaffold(body: Center(child: CircularProgressIndicator()));
-        }
-        
-        final recording = snapshot.data;
-        if (recording == null) {
-          return const Scaffold(body: Center(child: Text('データが見つかりません')));
-        }
+         final recording = snapshot.data;
+         if (recording == null) return const Scaffold(body: Center(child: Text('データが見つかりません')));
+         
+         // 共有用テキストの準備
+         final String currentSummary = recording.summary ?? "なし";
+         final String currentTrans = recording.transcripts.map((e) => "${e.speaker}: ${e.text}").join("\n");
+         final String shareContent = "【要約】\n$currentSummary\n\n【全文】\n$currentTrans";
 
-        // // 表示するテキストの決定
-        // String displayText;
-        // if (_currentMode == DisplayMode.summary){
-        //   displayText = (recording.summary != null && recording.summary!.isNotEmpty) 
-        //     ? recording.summary!
-        //     : "要約はまだありません (同期中または生成待ち)";
-        // }else {
-        //   displayText = (recording.transcription != null && recording.transcription!.isNotEmpty)
-        //       ? recording.transcription!
-        //       : "文字起こしはまだありません (同期中または生成待ち)";
-        // }
-        final String currentSummary = recording.summary ?? "なし";
-        final String currentTrans = recording.transcripts.map((e) => "${e.speaker}: ${e.text}").join("\n");
-        final String shareContent = "【要約】\n$currentSummary\n\n【全文】\n$currentTrans";
-
-        _displayText = _currentMode == DisplayMode.summary ? currentSummary : currentTrans;
         return Scaffold(
+          // 1. ヘッダー (シンプルに)
           appBar: AppBar(
-          // タイトルを受け取ったデータの日付などにする
-          title: Row(
+             title: Text(recording.title, overflow: TextOverflow.ellipsis),
+             actions: [
+               // ★作成した保存/同期ボタンを配置
+               _buildHeaderActionButton(recording),
+
+               // 共有ボタン
+               IconButton(
+                 icon: const Icon(Icons.share), 
+                 onPressed: () { 
+                   Navigator.push(context, MaterialPageRoute(builder: (context) => ShareScreen(textContent: shareContent))); 
+                 }
+               ),
+             ],
+          ),
+          
+          body: Column(
             children: [
-              Tooltip(
-                message: recording.remoteId != null
-                  ? 'クラウドに保存済み'
-                  : '未アップロード(ローカルのみ)',
-                child: Icon(
-                  recording.remoteId != null
-                    ? Icons.cloud_done
-                    : Icons.cloud_off,
-                  color:recording.remoteId != null
-                    ? Colors.green
-                    : Colors.grey,
-                  size: 20,
-                ),
-              ),
-              const SizedBox(width: 8),
-
-              // タイトル
-              Expanded(
-                child: Text(
-                  recording.title,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ),
-            ],
-          ),
-          actions: [
-          // クラウドと同期
-          if (recording.remoteId != null)
-            IconButton(
-              icon: const Icon(Icons.sync),
-              tooltip: 'クラウドから結果を取得',
-              onPressed: _isProcessing ? null : () => _manualSync(),
-            ),
-            IconButton(
-              icon: const Icon(Icons.share),
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => ShareScreen(textContent: shareContent),
-                  ),
-                );
-              },
-          ),
-        ],
-      ),
-      body: Column(
-        children: [
-              // 1. プレイヤー / 画像表示エリア (HEADのデザインを採用)
-              Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(color: Colors.grey.shade50),
-                child: _isImage
-                    ? ClipRRect(
-                        borderRadius: BorderRadius.circular(8),
-                        child: Image.file(
-                          File(recording.filePath),
-                          height: 200,
-                          fit: BoxFit.contain,
-                          errorBuilder: (c, o, s) => const SizedBox(height:100, child: Center(child: Icon(Icons.broken_image))),
-                        ),
-                      )
-                    : Column(
-                        children: [
-                          Row(
-                            children: [
-                              IconButton(
-                                iconSize: 40,
-                                icon: Icon(_isPlaying ? Icons.pause_circle : Icons.play_circle),
-                                color: Colors.blue,
-                                onPressed: _togglePlay,
-                              ),
-                              Expanded(
-                                child: Slider(
-                                  min: 0,
-                                  max: _duration.inMilliseconds.toDouble(),
-                                  value: _position.inMilliseconds.toDouble().clamp(0, _duration.inMilliseconds.toDouble()),
-                                  onChanged: (value) {
-                                    _audioPlayer.seek(Duration(milliseconds: value.toInt()));
-                                  },
-                                ),
-                              ),
-                            ],
-                          ),
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 16.0),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text(_formatDuration(_position)),
-                                Text(_formatDuration(_duration)),
-                              ],
-                            ),
-                          ),
-                        ],
-                    ),
-              ),
-
-            SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              child: Row(
-                children: [
-                  ElevatedButton.icon(
-                    onPressed: () => setState(() => _currentMode = DisplayMode.transcription),
-                    style: ElevatedButton.styleFrom(
-                          backgroundColor: _currentMode == DisplayMode.transcription ? Colors.blue[100] : null,
-                        ),
-
-                    icon: const Icon(Icons.description),
-                    label: const Text('文字起こし'),
-                  ),
-                  const SizedBox(width: 10),
-                  
-                  ElevatedButton.icon(
-                    onPressed: () => setState(() => _currentMode = DisplayMode.summary),
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: _currentMode == DisplayMode.summary ? Colors.blue[100] : null,
-                        ),
-
-                    icon: const Icon(Icons.summarize),
-                    label: const Text('要約'),
-                  ),
-                  const SizedBox(width: 10),
-
-                  // ---------------------------
-                  ElevatedButton.icon(
-                    onPressed: (_isLoading || _isUploading) ? null : () => s3Upload(recording.title),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.orangeAccent, // 目立つように色を変更
-                      foregroundColor: Colors.white,
-                      disabledBackgroundColor: Colors.orangeAccent.withOpacity(0.6),
-                      disabledForegroundColor: Colors.white,
-                    ),
-                    icon:  _isUploading
-                      ? const SizedBox(
-                        width: 20, 
-                        height: 20,
-                        child: CircularProgressIndicator(
-                          strokeWidth: 2,
-                          color: Colors.white,
-                        ),
-                      )
-                      : const Icon(Icons.cloud_upload),
-                    label: Text(_uploadStatusText),
-                  ),
-                  const SizedBox(width: 10),
-                  // ---------------------------
-
-                    // 翻訳 (HEADの機能)
-                    ElevatedButton.icon(
-                      onPressed: _isLoading ? null : () => _showTranslationDialog(recording),
-                      icon: const Icon(Icons.translate),
-                      label: Text(_currentDisplayLanguage == 'original' ? '翻訳' :'翻訳中'),
-                      style: _currentDisplayLanguage != 'original' 
-                      ? ElevatedButton.styleFrom(backgroundColor: Colors.indigo.shade100) 
-                      : null,
-                    ),
-                    
-                    // ローカル処理 (HEADの機能: 必要な場合)
-                    if (_isImage)
-                       Padding(
-                         padding: const EdgeInsets.only(left: 10),
-                         child: IconButton(
-                           icon: const Icon(Icons.refresh), 
-                           tooltip: "再解析",
-                           onPressed: () => _runGeminiTask(() => _geminiService.transcribeImage(File(recording.filePath)), recording),
+               // 2. プレイヤーUI (コンパクト化)
+               Container(
+                 color: Colors.grey.shade50,
+                 padding: const EdgeInsets.only(bottom: 0),
+                 child: _isImage 
+                   ? Image.file(File(recording.filePath), height: 200, fit: BoxFit.contain) 
+                   : Column(
+                       children: [
+                         Row(
+                           children: [
+                             IconButton(
+                               icon: Icon(_isPlaying ? Icons.pause_circle : Icons.play_circle, size: 40, color: Colors.blue), 
+                               onPressed: _togglePlay
+                             ),
+                             Expanded(
+                               // ★シークバーを細く・小さくする設定
+                               child: SliderTheme(
+                                 data: SliderTheme.of(context).copyWith(
+                                   trackHeight: 2.0, // 線の太さを2pxに
+                                   thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6.0), // つまみを小さく
+                                   overlayShape: const RoundSliderOverlayShape(overlayRadius: 14.0), // タップ判定を少し小さく
+                                 ),
+                                 child: Slider(
+                                   value: _position.inMilliseconds.toDouble().clamp(0, _duration.inMilliseconds.toDouble()), 
+                                   max: _duration.inMilliseconds.toDouble(), 
+                                   onChanged: (v) => _audioPlayer.seek(Duration(milliseconds:v.toInt()))
+                                 ),
+                               ),
+                             ),
+                           ],
                          ),
+                         Padding(
+                           padding: const EdgeInsets.symmetric(horizontal: 24), 
+                           child: Row(
+                             mainAxisAlignment:MainAxisAlignment.spaceBetween, 
+                             children: [
+                               Text(_formatDuration(_position), style: const TextStyle(fontSize: 12)), 
+                               Text(_formatDuration(_duration), style: const TextStyle(fontSize: 12))
+                             ]
+                           )
+                         )
+                       ]
+                     )
+               ),
+               
+               // 3. 検索エリア (出し入れ機能付き)
+               AnimatedContainer(
+                 duration: const Duration(milliseconds: 300),
+                 color: Colors.white,
+                 padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                 // 表示フラグによって中身を切り替え
+                 child: _isSearchBarVisible
+                   ? // ■ 検索バーが表示されている時
+                     TextField(
+                       controller: _localSearchController,
+                       autofocus: true, // 開いたらすぐ入力状態に
+                       decoration: InputDecoration(
+                         hintText: '文字起こし内を検索...',
+                         prefixIcon: const Icon(Icons.search, size: 20, color: Colors.grey),
+                         // 閉じるボタン
+                         suffixIcon: IconButton(
+                           icon: const Icon(Icons.close, size: 20, color: Colors.grey),
+                           onPressed: () {
+                             setState(() {
+                               _isSearchBarVisible = false; // 閉じる
+                               _localSearchController.clear(); // 文字を消す
+                               _currentSearchKeyword = ''; // 検索解除
+                             });
+                           },
+                         ),
+                         contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 10),
+                         border: OutlineInputBorder(borderRadius: BorderRadius.circular(8), borderSide: BorderSide(color: Colors.grey.shade300)),
+                         filled: true,
+                         fillColor: Colors.grey.shade100,
+                         isDense: true,
                        ),
-                  ],
-                ),
-              ),
+                       style: const TextStyle(fontSize: 14),
+                     )
+                   : // ■ 普段（ボタンのみ表示）
+                     Row(
+                       mainAxisAlignment: MainAxisAlignment.spaceBetween, // 左と右に離して配置
+                       children: [
+                         // 1. 左側：検索ボタン
+                         TextButton.icon(
+                           onPressed: () {
+                             setState(() => _isSearchBarVisible = true);
+                           },
+                           icon: const Icon(Icons.search, size: 20, color: Colors.grey),
+                           label: const Text("検索", style: TextStyle(color: Colors.grey)),
+                           style: TextButton.styleFrom(
+                             backgroundColor: Colors.grey.shade50,
+                             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                           ),
+                         ),
 
-              const Divider(height: 1),
+                         // 2. 右側：翻訳ボタン
+                         IconButton(
+                           icon: const Icon(Icons.translate),
+                           tooltip: '翻訳',
+                           onPressed: _isLoading ? null : () => _showTranslationDialog(recording),
+                         ),
+                       ],
+                     ),
+               ),
+               // 4. タブ切り替え (シンプルに見やすく)
+               Container(
+                 decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.grey.shade300))),
+                 child: Row(
+                   children: [
+                     Expanded(
+                       child: TextButton(
+                         onPressed: () => setState(() => _currentMode = DisplayMode.transcription),
+                         style: TextButton.styleFrom(
+                           backgroundColor: _currentMode == DisplayMode.transcription ? Colors.blue.withOpacity(0.1) : null,
+                           shape: const RoundedRectangleBorder(),
+                           padding: const EdgeInsets.symmetric(vertical: 12),
+                         ),
+                         child: const Text('文字起こし', style: TextStyle(fontWeight: FontWeight.bold)),
+                       ),
+                     ),
+                     Expanded(
+                       child: TextButton(
+                         onPressed: () => setState(() => _currentMode = DisplayMode.summary),
+                         style: TextButton.styleFrom(
+                           backgroundColor: _currentMode == DisplayMode.summary ? Colors.blue.withOpacity(0.1) : null,
+                           shape: const RoundedRectangleBorder(),
+                           padding: const EdgeInsets.symmetric(vertical: 12),
+                         ),
+                         child: const Text('要約', style: TextStyle(fontWeight: FontWeight.bold)),
+                       ),
+                     ),
+                   ],
+                 ),
+               ),
 
-              // 3. コンテンツ表示エリア (Mainのロジックを採用)
-              Expanded(
+               // 5. メインコンテンツ (リスト表示)
+               Expanded(
                 child: _isLoading 
                   ? const Center(child: CircularProgressIndicator())
                   : _currentMode == DisplayMode.summary
@@ -1442,7 +1607,7 @@ Future<void> s3Upload(String title) async {
             ],
           ),
         );
-      },
+      }
     );
   }
 }

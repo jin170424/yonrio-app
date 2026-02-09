@@ -51,6 +51,8 @@ class Recording {
   @Index(type: IndexType.value)
   String? transcription;
 
+  bool isFavorite = false;
+
   // AI要約
   String? summary;
 

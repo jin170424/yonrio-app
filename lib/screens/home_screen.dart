@@ -1,5 +1,5 @@
+import 'dart:async';
 import 'dart:io'; 
-// ★追加: ランダムID生成用
 import 'dart:math'; 
 import 'package:dio/dio.dart';
 import 'package:flutter/material.dart';
@@ -23,6 +23,8 @@ import 'login_screen.dart';
 import '../repositories/recording_repository.dart';
 import '../services/get_idtoken_service.dart';
 
+enum RecordingFilterType { all, audio, image, favorite }
+
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
@@ -35,6 +37,12 @@ class _HomeScreenState extends State<HomeScreen> {
   late final RecordingRepository _repository;
   bool _isSyncing = false;
 
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
+  RecordingFilterType _filterType = RecordingFilterType.all;
+  Timer? _debounceTimer;
+  
+
   @override
   void initState() {
     super.initState();
@@ -43,9 +51,92 @@ class _HomeScreenState extends State<HomeScreen> {
     final dio = Dio();
     if (isar != null) {
       _repository = RecordingRepository(isar: isar, dio: dio);
+      _searchController.addListener(_onSearchChanged);
+      _updateRecordingStream(); 
+      _quietSyncOnStartup();
       _initRecordingStream();
       _quietSyncOnStartup();
     }
+    
+  }
+
+  void _onSearchChanged() {
+    if (_debounceTimer?.isActive ?? false) _debounceTimer!.cancel();
+    _debounceTimer = Timer(const Duration(milliseconds: 500), () {
+      if (mounted && _searchQuery != _searchController.text) {
+        setState(() {
+          _searchQuery = _searchController.text;
+        });
+        _updateRecordingStream();
+      }
+    });
+  }
+
+  // ★これが赤波の原因だった「命令の中身」です
+  void _updateRecordingStream() {
+    final isar = Isar.getInstance();
+    if (isar == null) return;
+
+    // 1. 基本フィルタ（削除待ちでないもの）
+    QueryBuilder<Recording, Recording, QAfterFilterCondition> query =
+        isar.recordings.filter().needsCloudDeleteEqualTo(false);
+
+    // 2. 音声・画像の絞り込み
+    if (_filterType == RecordingFilterType.image) {
+      query = query.group((q) => q
+          .filePathEndsWith('.jpg', caseSensitive: false).or()
+          .filePathEndsWith('.jpeg', caseSensitive: false).or()
+          .filePathEndsWith('.png', caseSensitive: false).or()
+          .filePathEndsWith('.heic', caseSensitive: false));
+    } else if (_filterType == RecordingFilterType.audio) {
+      query = query.group((q) => q
+          .not().filePathEndsWith('.jpg', caseSensitive: false).and()
+          .not().filePathEndsWith('.jpeg', caseSensitive: false).and()
+          .not().filePathEndsWith('.png', caseSensitive: false).and()
+          .not().filePathEndsWith('.heic', caseSensitive: false));
+    }
+    else if (_filterType == RecordingFilterType.favorite) {
+      query = query.and().isFavoriteEqualTo(true);
+    }
+    // 3. キーワード検索（タイトル、要約、文字起こしの中身）
+    if (_searchQuery.isNotEmpty) {
+      query = query.and().group((q) => q
+          .titleContains(_searchQuery, caseSensitive: false)
+          .or()
+          .summaryContains(_searchQuery, caseSensitive: false)
+          .or()
+          .transcripts((t) => t.textContains(_searchQuery, caseSensitive: false))
+      );
+    }
+
+    setState(() {
+      _recordingStream = query.sortByCreatedAtDesc().watch(fireImmediately: true);
+    });
+  }
+
+  // フィルタボタン（チップ）を作る部品
+  Widget _buildFilterChip(String label, RecordingFilterType type) {
+    final isSelected = _filterType == type;
+    return Padding(
+      padding: const EdgeInsets.only(right: 8.0),
+      child: ChoiceChip(
+        label: Text(label),
+        selected: isSelected,
+        onSelected: (bool selected) {
+          setState(() {
+            if (selected) {
+              _filterType = type;
+              _updateRecordingStream();
+            }
+          });
+        },
+        selectedColor: Colors.blue.withOpacity(0.2),
+        labelStyle: TextStyle(
+          color: isSelected ? Colors.blue : Colors.black,
+          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+        ),
+      ),
+    );
   }
 
   void _initRecordingStream() {
@@ -264,6 +355,35 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
+              ListTile(
+                leading: Icon(
+                  recording.isFavorite ? Icons.star : Icons.star_border,
+                  color: recording.isFavorite ? Colors.orange : Colors.grey,
+                ),
+                title: Text(recording.isFavorite ? 'お気に入りを解除' : 'お気に入りに登録'),
+                onTap: () async {
+                  Navigator.pop(context); // メニューを閉じる
+                  final isar = Isar.getInstance();
+                  if (isar != null) {
+                    await isar.writeTxn(() async {
+                      recording.isFavorite = !recording.isFavorite;
+                      // recording.needsCloudUpdate = true; // クラウド同期する場合はコメントアウトを外す
+                      await isar.recordings.put(recording);
+                    });
+                    
+                    // スナックバーで通知
+                    if (mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text(recording.isFavorite ? 'お気に入りに登録しました' : 'お気に入りを解除しました'),
+                          duration: const Duration(seconds: 1),
+                        ),
+                      );
+                    }
+                  }
+                },
+              ),
+              const Divider(), // 区切り線
               ListTile(
                 leading: const Icon(Icons.edit, color: Colors.blue),
                 title: const Text('名前を変更'),
@@ -502,6 +622,40 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Widget _buildStatusChip(Recording recording) {
+    if (recording.remoteId == null) {
+      // 1. クラウドIDがない = 未保存
+      return _statusBadge(Icons.cloud_off, '未保存', Colors.grey);
+    } else if (recording.transcripts.isEmpty) {
+      // 2. IDはあるが、データがまだローカルにない = 未解析
+      // アイコンを「待機中/解析」っぽいものに変更
+      return _statusBadge(Icons.analytics_outlined, '未解析', Colors.orange);
+    } else {
+      // 3. 文字起こしデータがある = 完了
+      return _statusBadge(Icons.check_circle, '完了', Colors.green);
+    }
+  }
+
+  // バッジのデザイン定義
+  Widget _statusBadge(IconData icon, String text, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(4),
+        border: Border.all(color: color.withOpacity(0.5)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 12, color: color),
+          const SizedBox(width: 4),
+          Text(text, style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.bold)),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -560,63 +714,175 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ],
       ),
-      body: _recordingStream == null
-          ? const Center(child: CircularProgressIndicator())
-          : StreamBuilder<List<Recording>>(
-              stream: _recordingStream,
-              builder: (context, snapshot) {
-                if (snapshot.hasError) {
-                  return Center(child: Text('エラー: ${snapshot.error}'));
-                }
-                final recordings = snapshot.data;
-                if (recordings == null || recordings.isEmpty) {
-                  return const Center(child: Text('データがありません'));
-                }
+      body: Column(
+        children: [
+          // 1. 検索バーとフィルタボタンのエリア
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 16.0, vertical: 8.0),
+            color: Colors.grey.shade50,
+            child: Column(
+              children: [
+                // 検索ボックス
+                TextField(
+                  controller: _searchController,
+                  decoration: InputDecoration(
+                    hintText: 'タイトルや文字起こし内容で検索',
+                    prefixIcon: const Icon(Icons.search),
+                    suffixIcon: _searchController.text.isNotEmpty
+                        ? IconButton(
+                            icon: const Icon(Icons.clear),
+                            onPressed: () {
+                              _searchController.clear();
+                              setState(() => _searchQuery = "");
+                              _updateRecordingStream();
+                            },
+                          )
+                        : null,
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
+                    filled: true,
+                    fillColor: Colors.white,
+                    contentPadding: const EdgeInsets.symmetric(vertical: 0, horizontal: 16),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                // フィルタボタン
+                SingleChildScrollView(
+                  scrollDirection: Axis.horizontal,
+                  child: Row(
+                    children: [
+                      _buildFilterChip('すべて', RecordingFilterType.all),
+                      _buildFilterChip('お気に入り', RecordingFilterType.favorite),
+                      _buildFilterChip('音声のみ', RecordingFilterType.audio),
+                      _buildFilterChip('画像のみ', RecordingFilterType.image),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
 
-                return ListView.builder(
-                  itemCount: recordings.length,
-                  itemBuilder: (context, index) {
-                    final recording = recordings[index];
-                    
-                    final path = recording.filePath.toLowerCase();
-                    final fileName = path.split('/').last;
+          // 2. 元々のリスト表示部分 (Expandedで囲むのが重要！)
+          Expanded(
+            child: _recordingStream == null
+                ? const Center(child: CircularProgressIndicator())
+                : StreamBuilder<List<Recording>>(
+                    stream: _recordingStream,
+                    builder: (context, snapshot) {
+                      if (snapshot.hasError) {
+                        return Center(child: Text('エラー: ${snapshot.error}'));
+                      }
+                      final recordings = snapshot.data;
+                      if (recordings == null || recordings.isEmpty) {
+                        return const Center(child: Text('データがありません'));
+                      }
 
-                    IconData leadIcon = Icons.mic;
-                    Color iconColor = Colors.blue;
-                    
-                    if (path.endsWith('.jpg') || path.endsWith('.jpeg') || path.endsWith('.png')) {
-                      leadIcon = Icons.image;
-                      iconColor = Colors.purple;
-                    } else if (fileName.startsWith('imported_')) {
-                      leadIcon = Icons.folder;
-                      iconColor = Colors.orange;
-                    }
+                      return ListView.builder(
+                        itemCount: recordings.length,
+                        itemBuilder: (context, index) {
+                          final recording = recordings[index];
+                          
+                          // ファイル名やアイコンの判定（既存のコード）
+                          final path = recording.filePath.toLowerCase();
+                          final fileName = path.split('/').last;
+                          IconData leadIcon = Icons.mic;
+                          Color iconColor = Colors.blue;
+                          if (path.endsWith('.jpg') || path.endsWith('.jpeg') || path.endsWith('.png')) {
+                            leadIcon = Icons.image;
+                            iconColor = Colors.purple;
+                          } else if (fileName.startsWith('imported_')) {
+                            leadIcon = Icons.folder;
+                            iconColor = Colors.orange;
+                          }
 
-                    return Card(
-                      child: ListTile(
-                        leading: Icon(leadIcon, color: iconColor),
-                        title: Text(recording.title),
-                        subtitle: Text(
-                          DateFormat('yyyy/MM/dd HH:mm').format(recording.createdAt)
-                        ),
-                        trailing: const Icon(Icons.chevron_right),
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => ResultScreen(recording: recording),
+                          // ★追加: 文字起こし内でのヒット判定
+                          bool hasHitInTranscript = false;
+                          String? hitTextSnippet;
+
+                          if (_searchQuery.isNotEmpty) {
+                            // 文字起こしリストの中から、検索ワードを含む最初のセグメントを探す
+                            for (var segment in recording.transcripts) {
+                              if (segment.text.toLowerCase().contains(_searchQuery.toLowerCase())) {
+                                hasHitInTranscript = true;
+                                // ヒットした箇所の抜粋を作る（オプション）
+                                // 長すぎる場合はカットするなどの処理も可能ですが、まずはシンプルに
+                                hitTextSnippet = "本文に「$_searchQuery」が含まれます";
+                                break; // 1つ見つかればOK
+                              }
+                            }
+                            // もしtranscriptsが空でも、summaryにある場合もチェックしても良いかも
+                            if (!hasHitInTranscript && recording.summary != null) {
+                              if (recording.summary!.toLowerCase().contains(_searchQuery.toLowerCase())) {
+                                  hasHitInTranscript = true;
+                                  hitTextSnippet = "要約に「$_searchQuery」が含まれます";
+                              }
+                            }
+                          }
+
+                          return Card(
+                            child: ListTile(
+                              leading: Icon(leadIcon, color: iconColor),
+                              title: Text(recording.title),
+                              
+                              // ★修正: サブタイトル部分を書き換え
+                              subtitle: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  // 1. もともとの日付表示
+                                  Text(DateFormat('yyyy/MM/dd HH:mm').format(recording.createdAt)),
+                                  
+                                  // ★追加: ここにステータスバッジを入れます
+                                  const SizedBox(height: 4), // 少し隙間をあける
+                                  _buildStatusChip(recording),
+                                  
+                                  // 2. ヒットした場合のメッセージ表示
+                                  if (hasHitInTranscript && hitTextSnippet != null)
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 4.0),
+                                      child: Row(
+                                        children: [
+                                          const Icon(Icons.manage_search, size: 16, color: Colors.orange),
+                                          const SizedBox(width: 4),
+                                          Expanded(
+                                            child: Text(
+                                              hitTextSnippet,
+                                              style: const TextStyle(
+                                                color: Colors.orange, 
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 12,
+                                              ),
+                                              overflow: TextOverflow.ellipsis,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                ],
+                              ),
+                              
+                              trailing: const Icon(Icons.chevron_right),
+                              onTap: () {
+                                Navigator.push(
+                                  context,
+                                  MaterialPageRoute(
+                                    builder: (context) => ResultScreen(
+                                      recording: recording,
+                                      searchKeyword: _searchQuery.isNotEmpty ? _searchQuery : null,
+                                    ),
+                                  ),
+                                );
+                              },
+                              onLongPress: () {
+                                _showItemMenu(recording);
+                              },
                             ),
                           );
                         },
-                        onLongPress: () {
-                          _showItemMenu(recording);
-                        },
-                      ),
-                    );
-                  },
-                );
-              },
-            ),
+                      );
+                    },
+                  ),
+          ),
+        ],
+      ),
 
       floatingActionButton: Column(
         mainAxisSize: MainAxisSize.min,

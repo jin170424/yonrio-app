@@ -32,74 +32,79 @@ const RecordingSchema = CollectionSchema(
       name: r'filePath',
       type: IsarType.string,
     ),
-    r'lastSyncTime': PropertySchema(
+    r'isFavorite': PropertySchema(
       id: 3,
+      name: r'isFavorite',
+      type: IsarType.bool,
+    ),
+    r'lastSyncTime': PropertySchema(
+      id: 4,
       name: r'lastSyncTime',
       type: IsarType.dateTime,
     ),
     r'needsCloudDelete': PropertySchema(
-      id: 4,
+      id: 5,
       name: r'needsCloudDelete',
       type: IsarType.bool,
     ),
     r'needsCloudUpdate': PropertySchema(
-      id: 5,
+      id: 6,
       name: r'needsCloudUpdate',
       type: IsarType.bool,
     ),
     r'ownerName': PropertySchema(
-      id: 6,
+      id: 7,
       name: r'ownerName',
       type: IsarType.string,
     ),
     r'remoteId': PropertySchema(
-      id: 7,
+      id: 8,
       name: r'remoteId',
       type: IsarType.string,
     ),
     r's3AudioUrl': PropertySchema(
-      id: 8,
+      id: 9,
       name: r's3AudioUrl',
       type: IsarType.string,
     ),
     r's3TranscriptJsonUrl': PropertySchema(
-      id: 9,
+      id: 10,
       name: r's3TranscriptJsonUrl',
       type: IsarType.string,
     ),
     r'sharedWith': PropertySchema(
-      id: 10,
+      id: 11,
       name: r'sharedWith',
       type: IsarType.objectList,
       target: r'SharedUser',
     ),
     r'sourceOriginalId': PropertySchema(
-      id: 11,
+      id: 12,
       name: r'sourceOriginalId',
       type: IsarType.string,
     ),
     r'status': PropertySchema(
-      id: 12,
+      id: 13,
       name: r'status',
       type: IsarType.string,
     ),
     r'summary': PropertySchema(
-      id: 13,
+      id: 14,
       name: r'summary',
       type: IsarType.string,
     ),
     r'title': PropertySchema(
-      id: 14,
+      id: 15,
       name: r'title',
       type: IsarType.string,
     ),
     r'transcription': PropertySchema(
-      id: 15,
+      id: 16,
       name: r'transcription',
       type: IsarType.string,
     ),
     r'updatedAt': PropertySchema(
-      id: 16,
+      id: 17,
       name: r'updatedAt',
       type: IsarType.dateTime,
     )
@@ -268,25 +273,26 @@ void _recordingSerialize(
   writer.writeDateTime(offsets[0], object.createdAt);
   writer.writeLong(offsets[1], object.durationSeconds);
   writer.writeString(offsets[2], object.filePath);
-  writer.writeDateTime(offsets[3], object.lastSyncTime);
-  writer.writeBool(offsets[4], object.needsCloudDelete);
-  writer.writeBool(offsets[5], object.needsCloudUpdate);
-  writer.writeString(offsets[6], object.ownerName);
-  writer.writeString(offsets[7], object.remoteId);
-  writer.writeString(offsets[8], object.s3AudioUrl);
-  writer.writeString(offsets[9], object.s3TranscriptJsonUrl);
+  writer.writeBool(offsets[3], object.isFavorite);
+  writer.writeDateTime(offsets[4], object.lastSyncTime);
+  writer.writeBool(offsets[5], object.needsCloudDelete);
+  writer.writeBool(offsets[6], object.needsCloudUpdate);
+  writer.writeString(offsets[7], object.ownerName);
+  writer.writeString(offsets[8], object.remoteId);
+  writer.writeString(offsets[9], object.s3AudioUrl);
+  writer.writeString(offsets[10], object.s3TranscriptJsonUrl);
   writer.writeObjectList<SharedUser>(
-    offsets[10],
+    offsets[11],
     allOffsets,
     SharedUserSchema.serialize,
     object.sharedWith,
   );
-  writer.writeString(offsets[11], object.sourceOriginalId);
-  writer.writeString(offsets[12], object.status);
-  writer.writeString(offsets[13], object.summary);
-  writer.writeString(offsets[14], object.title);
-  writer.writeString(offsets[15], object.transcription);
-  writer.writeDateTime(offsets[16], object.updatedAt);
+  writer.writeString(offsets[12], object.sourceOriginalId);
+  writer.writeString(offsets[13], object.status);
+  writer.writeString(offsets[14], object.summary);
+  writer.writeString(offsets[15], object.title);
+  writer.writeString(offsets[16], object.transcription);
+  writer.writeDateTime(offsets[17], object.updatedAt);
 }
 
 Recording _recordingDeserialize(
@@ -300,25 +306,26 @@ Recording _recordingDeserialize(
   object.durationSeconds = reader.readLong(offsets[1]);
   object.filePath = reader.readString(offsets[2]);
   object.id = id;
-  object.lastSyncTime = reader.readDateTimeOrNull(offsets[3]);
-  object.needsCloudDelete = reader.readBool(offsets[4]);
-  object.needsCloudUpdate = reader.readBool(offsets[5]);
-  object.ownerName = reader.readString(offsets[6]);
-  object.remoteId = reader.readStringOrNull(offsets[7]);
-  object.s3AudioUrl = reader.readStringOrNull(offsets[8]);
-  object.s3TranscriptJsonUrl = reader.readStringOrNull(offsets[9]);
+  object.isFavorite = reader.readBool(offsets[3]);
+  object.lastSyncTime = reader.readDateTimeOrNull(offsets[4]);
+  object.needsCloudDelete = reader.readBool(offsets[5]);
+  object.needsCloudUpdate = reader.readBool(offsets[6]);
+  object.ownerName = reader.readString(offsets[7]);
+  object.remoteId = reader.readStringOrNull(offsets[8]);
+  object.s3AudioUrl = reader.readStringOrNull(offsets[9]);
+  object.s3TranscriptJsonUrl = reader.readStringOrNull(offsets[10]);
   object.sharedWith = reader.readObjectList<SharedUser>(
-    offsets[10],
+    offsets[11],
     SharedUserSchema.deserialize,
     allOffsets,
     SharedUser(),
   );
-  object.sourceOriginalId = reader.readStringOrNull(offsets[11]);
-  object.status = reader.readStringOrNull(offsets[12]);
-  object.summary = reader.readStringOrNull(offsets[13]);
-  object.title = reader.readString(offsets[14]);
-  object.transcription = reader.readStringOrNull(offsets[15]);
-  object.updatedAt = reader.readDateTime(offsets[16]);
+  object.sourceOriginalId = reader.readStringOrNull(offsets[12]);
+  object.status = reader.readStringOrNull(offsets[13]);
+  object.summary = reader.readStringOrNull(offsets[14]);
+  object.title = reader.readString(offsets[15]);
+  object.transcription = reader.readStringOrNull(offsets[16]);
+  object.updatedAt = reader.readDateTime(offsets[17]);
   return object;
 }
 
@@ -336,37 +343,39 @@ P _recordingDeserializeProp<P>(
     case 2:
       return (reader.readString(offset)) as P;
     case 3:
-      return (reader.readDateTimeOrNull(offset)) as P;
-    case 4:
       return (reader.readBool(offset)) as P;
+    case 4:
+      return (reader.readDateTimeOrNull(offset)) as P;
     case 5:
       return (reader.readBool(offset)) as P;
     case 6:
-      return (reader.readString(offset)) as P;
+      return (reader.readBool(offset)) as P;
     case 7:
-      return (reader.readStringOrNull(offset)) as P;
+      return (reader.readString(offset)) as P;
     case 8:
       return (reader.readStringOrNull(offset)) as P;
     case 9:
       return (reader.readStringOrNull(offset)) as P;
     case 10:
+      return (reader.readStringOrNull(offset)) as P;
+    case 11:
       return (reader.readObjectList<SharedUser>(
         offset,
         SharedUserSchema.deserialize,
         allOffsets,
         SharedUser(),
       )) as P;
-    case 11:
-      return (reader.readStringOrNull(offset)) as P;
     case 12:
       return (reader.readStringOrNull(offset)) as P;
     case 13:
       return (reader.readStringOrNull(offset)) as P;
     case 14:
-      return (reader.readString(offset)) as P;
-    case 15:
       return (reader.readStringOrNull(offset)) as P;
+    case 15:
+      return (reader.readString(offset)) as P;
     case 16:
+      return (reader.readStringOrNull(offset)) as P;
+    case 17:
       return (reader.readDateTime(offset)) as P;
     default:
       throw IsarError('Unknown property with id $propertyId');
@@ -1383,6 +1392,16 @@ extension RecordingQueryFilter
         includeLower: includeLower,
         upper: upper,
         includeUpper: includeUpper,
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterFilterCondition> isFavoriteEqualTo(
+      bool value) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'isFavorite',
+        value: value,
       ));
     });
   }
@@ -3068,6 +3087,18 @@ extension RecordingQuerySortBy on QueryBuilder<Recording, Recording, QSortBy> {
     });
   }
 
+  QueryBuilder<Recording, Recording, QAfterSortBy> sortByIsFavorite() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'isFavorite', Sort.asc);
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterSortBy> sortByIsFavoriteDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'isFavorite', Sort.desc);
+    });
+  }
+
   QueryBuilder<Recording, Recording, QAfterSortBy> sortByLastSyncTime() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'lastSyncTime', Sort.asc);
@@ -3279,6 +3310,18 @@ extension RecordingQuerySortThenBy
     });
   }
 
+  QueryBuilder<Recording, Recording, QAfterSortBy> thenByIsFavorite() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'isFavorite', Sort.asc);
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterSortBy> thenByIsFavoriteDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'isFavorite', Sort.desc);
+    });
+  }
+
   QueryBuilder<Recording, Recording, QAfterSortBy> thenByLastSyncTime() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'lastSyncTime', Sort.asc);
@@ -3461,6 +3504,12 @@ extension RecordingQueryWhereDistinct
     });
   }
 
+  QueryBuilder<Recording, Recording, QDistinct> distinctByIsFavorite() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'isFavorite');
+    });
+  }
+
   QueryBuilder<Recording, Recording, QDistinct> distinctByLastSyncTime() {
     return QueryBuilder.apply(this, (query) {
       return query.addDistinctBy(r'lastSyncTime');
@@ -3575,6 +3624,12 @@ extension RecordingQueryProperty
   QueryBuilder<Recording, String, QQueryOperations> filePathProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'filePath');
+    });
+  }
+
+  QueryBuilder<Recording, bool, QQueryOperations> isFavoriteProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'isFavorite');
     });
   }
 
