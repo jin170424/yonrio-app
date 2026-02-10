@@ -371,7 +371,7 @@ class RecordingRepository {
       ..updatedAt = DateTime.now().toUtc()
       ..ownerName = ownerName
       ..ownerId = ownerId
-      ..status = 'processing';
+      ..status = 'pending';
 
     await isar.writeTxn(() async {
       await isar.recordings.put(newRecording);

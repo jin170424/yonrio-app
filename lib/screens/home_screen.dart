@@ -426,7 +426,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ..durationSeconds = 0
             ..createdAt = DateTime.now()
             ..updatedAt = DateTime.now()
-            ..status = "processing";
+            ..status = "pending";
 
           await isar.writeTxn(() async {
             await isar.recordings.put(newRecording);

@@ -12,9 +12,12 @@ import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import 'package:internet_connection_checker_plus/internet_connection_checker_plus.dart';
 import 'package:voice_app/models/transcript_segment.dart';
 import 'package:voice_app/repositories/recording_repository.dart';
+import 'package:voice_app/services/processing_service.dart';
 import 'package:voice_app/services/s3download_service.dart';
 import 'package:voice_app/services/user_service.dart';
 import 'package:voice_app/utils/network_utils.dart';
+import 'package:voice_app/widgets/estimated_progress_bar.dart';
+import 'package:voice_app/widgets/transcription_skelton.dart';
 import '../services/gemini_service.dart';
 import '../models/recording.dart';
 import 'share_screen.dart';
@@ -423,141 +426,175 @@ class _ResultScreenState extends State<ResultScreen> {
     );
   }
 
-Future<void> s3Upload(String title) async {
-  setState(() {
-    _isUploading = true;
-    _uploadStatusText = '保存中...';
-  });
-  // ファイルパスの取得（TODO: 念のため空チェックいれる）
-  final file = File(widget.recording.filePath);
-
-  // トークンの取得処理
-  try {
-    final tokenService = GetIdtokenService();
-    final token = await tokenService.getIdtoken();
-
-          // トークンがない場合（未ログインなど）はここで終了
-          if (token == null) {
-            print("トークンが取得できませんでした（未ログイン）");
-            
-            if (!mounted) return;
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('ログインが必要です')),
-            );
-            return;
-          }
-
-          print("トークン取得成功: ${token.substring(0, 10)}...");
-
-          // アップロード処理
-          final uploadService = S3UploadService();
-
-          String? existingId = widget.recording.remoteId;
-          
-          // アップロード実行
-          final result = await uploadService.uploadAudioFile(
-            file, 
-            title,
-            idToken: token,
-            recordingId: existingId,
-          );
-
-          // 成功時の処理
-          final recordingId = result['recording_id'];
-          final s3Key = result['s3_key'];
-          
-          print("保存完了！ ID: $recordingId");
-
-          await isar.writeTxn(() async {
-            if (widget.recording.remoteId == null){
-              widget.recording.remoteId = recordingId;
-            }
-            
-            // s3AudioPath に s3Key (パス) を保存
-            widget.recording.s3AudioUrl = s3Key;
-
-            await isar.recordings.put(widget.recording);
-          });
-
-          if (!mounted) return;
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('アップロード完了 (ID: $recordingId)')),
-            );
-
-          print("アップロード完了。AI処理待ち開始");
-
-          await _pollForUpdates(recordingId);
-
-        } catch (e) {
-          // エラーハンドリング
-          // print("アップロード失敗: $e");
-          if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('エラーが発生しました: $e')),
-          );
-        } finally {
-          if (mounted) {
-            setState(() {
-              // _isLoading = false;
-              _isUploading = false;
-              _uploadStatusText = 'アップロード';
-            });
-          }
-        }
-  }
-
-  Future<void> _pollForUpdates(String recordingId) async {
+  Future<void> _startBackgroundUpload() async {
+    if (_isUploading) return;
     setState(() {
-      _uploadStatusText = '処理中...';
+      _isUploading = true; 
     });
 
-    const int maxAttempts = 30;
-    const Duration interval = Duration(seconds: 5);
+    try {
+      final isar = Isar.getInstance();
+      if (isar != null) {
+        // サービス経由で開始（待機しない）
+        ProcessingService().startUploadAndProcessing(
+          widget.recording, 
+          isar, 
+          _repository
+        );
 
-    for (int i = 0; i < maxAttempts; i++){
-      try {
-        print("ポーリング試行: ${i + 1}/$maxAttempts");
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('解析を開始しました。一覧画面に戻っても処理は続きます。')),
+        );
 
-        final tokenService = GetIdtokenService();
-        final token = await tokenService.getIdtoken();
-
-        // isarから最新を取得
-        final latestRecording = await isar.recordings.get(widget.recording.id);
-
-        if (token != null && latestRecording != null) {
-          await _repository.syncTranscriptionAndSummary(latestRecording, token);
-
-          // データが入ったかチェック
-          final checkRecording = await isar.recordings.get(widget.recording.id);
-
-          if (checkRecording != null && checkRecording.transcripts.isNotEmpty) {
-            print("文字起こしデータ受信完了");
-            if (!mounted) return;
-
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('文字起こしが完了しました！')),
-            );
-
-            setState(() {
-              _currentMode = DisplayMode.transcription;
-            });
-
-            return;
-          }
-        }
-      } catch (e) {
-        print('ポーリング中のエラー(続行): $e');
+        // 即座に一覧に戻る場合
+        // Navigator.pop(context); 
       }
-      await Future.delayed(interval);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('開始エラー: $e')));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isUploading = false; // ボタンのローディングは解除
+        });
+      }
     }
-    // 回数切れ
-    if (mounted){
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('処理に時間がかかっています。後ほど「最新情報を確認」ボタンを押してください。')),
-      );
-    }
-
   }
+
+// Future<void> s3Upload(String title) async {
+//   setState(() {
+//     _isUploading = true;
+//     _uploadStatusText = '保存中...';
+//   });
+//   // ファイルパスの取得（TODO: 念のため空チェックいれる）
+//   final file = File(widget.recording.filePath);
+
+//   // トークンの取得処理
+//   try {
+//     final tokenService = GetIdtokenService();
+//     final token = await tokenService.getIdtoken();
+
+//           // トークンがない場合（未ログインなど）はここで終了
+//           if (token == null) {
+//             print("トークンが取得できませんでした（未ログイン）");
+            
+//             if (!mounted) return;
+//             ScaffoldMessenger.of(context).showSnackBar(
+//               const SnackBar(content: Text('ログインが必要です')),
+//             );
+//             return;
+//           }
+
+//           print("トークン取得成功: ${token.substring(0, 10)}...");
+
+//           // アップロード処理
+//           final uploadService = S3UploadService();
+
+//           String? existingId = widget.recording.remoteId;
+          
+//           // アップロード実行
+//           final result = await uploadService.uploadAudioFile(
+//             file, 
+//             title,
+//             idToken: token,
+//             recordingId: existingId,
+//           );
+
+//           // 成功時の処理
+//           final recordingId = result['recording_id'];
+//           final s3Key = result['s3_key'];
+          
+//           print("保存完了！ ID: $recordingId");
+
+//           await isar.writeTxn(() async {
+//             if (widget.recording.remoteId == null){
+//               widget.recording.remoteId = recordingId;
+//             }
+            
+//             // s3AudioPath に s3Key (パス) を保存
+//             widget.recording.s3AudioUrl = s3Key;
+
+//             await isar.recordings.put(widget.recording);
+//           });
+
+//           if (!mounted) return;
+//             ScaffoldMessenger.of(context).showSnackBar(
+//               SnackBar(content: Text('アップロード完了 (ID: $recordingId)')),
+//             );
+
+//           print("アップロード完了。AI処理待ち開始");
+
+//           await _pollForUpdates(recordingId);
+
+//         } catch (e) {
+//           // エラーハンドリング
+//           // print("アップロード失敗: $e");
+//           if (!mounted) return;
+//           ScaffoldMessenger.of(context).showSnackBar(
+//             SnackBar(content: Text('エラーが発生しました: $e')),
+//           );
+//         } finally {
+//           if (mounted) {
+//             setState(() {
+//               // _isLoading = false;
+//               _isUploading = false;
+//               _uploadStatusText = 'アップロード';
+//             });
+//           }
+//         }
+//   }
+
+//   Future<void> _pollForUpdates(String recordingId) async {
+//     setState(() {
+//       _uploadStatusText = '処理中...';
+//     });
+
+//     const int maxAttempts = 30;
+//     const Duration interval = Duration(seconds: 5);
+
+//     for (int i = 0; i < maxAttempts; i++){
+//       try {
+//         print("ポーリング試行: ${i + 1}/$maxAttempts");
+
+//         final tokenService = GetIdtokenService();
+//         final token = await tokenService.getIdtoken();
+
+//         // isarから最新を取得
+//         final latestRecording = await isar.recordings.get(widget.recording.id);
+
+//         if (token != null && latestRecording != null) {
+//           await _repository.syncTranscriptionAndSummary(latestRecording, token);
+
+//           // データが入ったかチェック
+//           final checkRecording = await isar.recordings.get(widget.recording.id);
+
+//           if (checkRecording != null && checkRecording.transcripts.isNotEmpty) {
+//             print("文字起こしデータ受信完了");
+//             if (!mounted) return;
+
+//             ScaffoldMessenger.of(context).showSnackBar(
+//               const SnackBar(content: Text('文字起こしが完了しました！')),
+//             );
+
+//             setState(() {
+//               _currentMode = DisplayMode.transcription;
+//             });
+
+//             return;
+//           }
+//         }
+//       } catch (e) {
+//         print('ポーリング中のエラー(続行): $e');
+//       }
+//       await Future.delayed(interval);
+//     }
+//     // 回数切れ
+//     if (mounted){
+//       ScaffoldMessenger.of(context).showSnackBar(
+//         const SnackBar(content: Text('処理に時間がかかっています。後ほど「最新情報を確認」ボタンを押してください。')),
+//       );
+//     }
+
+//   }
 
   Future<void> _handleTranslation(String targetLang) async {
     final tokenService = GetIdtokenService();
@@ -976,37 +1013,65 @@ Future<void> s3Upload(String title) async {
     final segments = recording.transcripts.toList();
     segments.sort((a, b) => a.startTimeMs.compareTo(b.startTimeMs));
     if (segments.isEmpty) {
-      if (recording.remoteId != null) {
+      final status = recording.status;
+      // if (recording.remoteId != null) {
+        if (status == 'uploading' || status == 'processing'){
+          return EstimatedProgressBar(status: status!);
+        }
+        if (status == 'completed' || status == 'processing'){
+          return const TranscriptionSkeleton();
+        }
+
+        if (status == 'pending' || status == null || status.isEmpty) {
         return Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const CircularProgressIndicator(),
-              const SizedBox(height: 20),
-              const Text(
-                "クラウドで処理中、または同期中です...",
-                style: TextStyle(color: Colors.grey),
+            children: const [
+              Icon(Icons.cloud_upload_outlined, size: 64, color: Colors.grey),
+              SizedBox(height: 20),
+              Text(
+                "文字起こしデータはまだありません",
+                style: TextStyle(color: Colors.grey, fontSize: 16),
               ),
-              const SizedBox(height: 20),
-              ElevatedButton.icon(
-                onPressed: _isLoading ? null : _manualSync,
-                icon: const Icon(Icons.refresh),
-                label: const Text("最新情報を確認"),
+              SizedBox(height: 10),
+              Text(
+                "「保存」ボタンを押して\n解析を開始してください",
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.grey, fontSize: 14),
               ),
             ],
           ),
         );
       }
 
-      if (recording.transcription != null && recording.transcription!.isNotEmpty){
-        return SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: Text(recording.transcription!),
+      if (status == 'failed') {
+        return Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: const [
+              Icon(Icons.error_outline, size: 48, color: Colors.redAccent),
+              SizedBox(height: 16),
+              Text("解析に失敗しました", style: TextStyle(color: Colors.red)),
+            ],
+          ),
         );
       }
 
+      // その他のエラー (デバッグ用にstatusを表示)
       return Center(
-        child: Text("文字起こしデータがありません"),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Text("データが表示できません"),
+            Text("Status: $status", style: const TextStyle(fontSize: 10, color: Colors.grey)),
+            const SizedBox(height: 20),
+            ElevatedButton.icon(
+              onPressed: _isLoading ? null : _manualSync,
+              icon: const Icon(Icons.refresh),
+              label: const Text("再読み込み"),
+            ),
+          ],
+        ),
       );
     }
 
@@ -1037,7 +1102,7 @@ Future<void> s3Upload(String title) async {
         return false;
       },
       child: ScrollablePositionedList.builder(
-        key: const PageStorageKey('transcription_list'),
+        // key: const PageStorageKey('transcription_list'),
         itemScrollController: _itemScrollController, // コントローラーセット
         itemPositionsListener: _itemPositionsListener, // リスナーセット
         itemCount: segments.length,
@@ -1060,6 +1125,7 @@ Future<void> s3Upload(String title) async {
             }
           }
         return Padding(
+          key: ValueKey(segment.id),
           padding: const EdgeInsets.symmetric(vertical: 8.0),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -1517,7 +1583,7 @@ Future<void> s3Upload(String title) async {
 
                   // ---------------------------
                   ElevatedButton.icon(
-                    onPressed: (_isLoading || _isUploading) ? null : () => s3Upload(recording.title),
+                    onPressed: (_isLoading || _isUploading) ? null : _startBackgroundUpload,
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.orangeAccent, // 目立つように色を変更
                       foregroundColor: Colors.white,
