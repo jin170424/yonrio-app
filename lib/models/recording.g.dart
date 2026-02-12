@@ -134,8 +134,8 @@ const RecordingSchema = CollectionSchema(
     r'remoteId': IndexSchema(
       id: 6301175856541681032,
       name: r'remoteId',
-      unique: true,
-      replace: true,
+      unique: false,
+      replace: false,
       properties: [
         IndexPropertySchema(
           name: r'remoteId',
@@ -479,61 +479,6 @@ void _recordingAttach(IsarCollection<dynamic> col, Id id, Recording object) {
   object.id = id;
   object.transcripts.attach(
       col, col.isar.collection<TranscriptSegment>(), r'transcripts', id);
-}
-
-extension RecordingByIndex on IsarCollection<Recording> {
-  Future<Recording?> getByRemoteId(String? remoteId) {
-    return getByIndex(r'remoteId', [remoteId]);
-  }
-
-  Recording? getByRemoteIdSync(String? remoteId) {
-    return getByIndexSync(r'remoteId', [remoteId]);
-  }
-
-  Future<bool> deleteByRemoteId(String? remoteId) {
-    return deleteByIndex(r'remoteId', [remoteId]);
-  }
-
-  bool deleteByRemoteIdSync(String? remoteId) {
-    return deleteByIndexSync(r'remoteId', [remoteId]);
-  }
-
-  Future<List<Recording?>> getAllByRemoteId(List<String?> remoteIdValues) {
-    final values = remoteIdValues.map((e) => [e]).toList();
-    return getAllByIndex(r'remoteId', values);
-  }
-
-  List<Recording?> getAllByRemoteIdSync(List<String?> remoteIdValues) {
-    final values = remoteIdValues.map((e) => [e]).toList();
-    return getAllByIndexSync(r'remoteId', values);
-  }
-
-  Future<int> deleteAllByRemoteId(List<String?> remoteIdValues) {
-    final values = remoteIdValues.map((e) => [e]).toList();
-    return deleteAllByIndex(r'remoteId', values);
-  }
-
-  int deleteAllByRemoteIdSync(List<String?> remoteIdValues) {
-    final values = remoteIdValues.map((e) => [e]).toList();
-    return deleteAllByIndexSync(r'remoteId', values);
-  }
-
-  Future<Id> putByRemoteId(Recording object) {
-    return putByIndex(r'remoteId', object);
-  }
-
-  Id putByRemoteIdSync(Recording object, {bool saveLinks = true}) {
-    return putByIndexSync(r'remoteId', object, saveLinks: saveLinks);
-  }
-
-  Future<List<Id>> putAllByRemoteId(List<Recording> objects) {
-    return putAllByIndex(r'remoteId', objects);
-  }
-
-  List<Id> putAllByRemoteIdSync(List<Recording> objects,
-      {bool saveLinks = true}) {
-    return putAllByIndexSync(r'remoteId', objects, saveLinks: saveLinks);
-  }
 }
 
 extension RecordingQueryWhereSort
