@@ -36,6 +36,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Stream<List<Recording>>? _recordingStream;
   late final RecordingRepository _repository;
   bool _isSyncing = false;
+  String? _currentUserId;
 
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
@@ -46,18 +47,33 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    _initialize();
+  }
 
+  Future<void> _initialize() async {
     final isar = Isar.getInstance();
     final dio = Dio();
+    
+    // 1. ユーザーIDの取得 (Main由来)
+    final userService = UserService();
+    final userId = await userService.getCurrentUserSub();
+    
     if (isar != null) {
       _repository = RecordingRepository(isar: isar, dio: dio);
+      
+      if (userId != null) {
+        setState(() {
+          _currentUserId = userId;
+        });
+      }
+
+      // 2. 初期化処理 (HEAD/Main統合)
       _searchController.addListener(_onSearchChanged);
-      _updateRecordingStream(); 
+      _updateRecordingStream(); // 初期表示用のストリーム構築
       _quietSyncOnStartup();
-      _initRecordingStream();
-      _quietSyncOnStartup();
+    } else {
+      print("Error: Isar instance is missing");
     }
-    
   }
 
   void _onSearchChanged() {
@@ -72,16 +88,21 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
-  // ★これが赤波の原因だった「命令の中身」です
+  // 統合されたストリーム更新メソッド
   void _updateRecordingStream() {
     final isar = Isar.getInstance();
     if (isar == null) return;
 
     // 1. 基本フィルタ（削除待ちでないもの）
+    // HEADのロジックをベースに、Mainの「自分のIDのみ」を追加
     QueryBuilder<Recording, Recording, QAfterFilterCondition> query =
         isar.recordings.filter().needsCloudDeleteEqualTo(false);
 
-    // 2. 音声・画像の絞り込み
+    if (_currentUserId != null) {
+      query = query.ownerIdEqualTo(_currentUserId);
+    }
+
+    // 2. 音声・画像の絞り込み (HEAD由来)
     if (_filterType == RecordingFilterType.image) {
       query = query.group((q) => q
           .filePathEndsWith('.jpg', caseSensitive: false).or()
@@ -98,7 +119,8 @@ class _HomeScreenState extends State<HomeScreen> {
     else if (_filterType == RecordingFilterType.favorite) {
       query = query.and().isFavoriteEqualTo(true);
     }
-    // 3. キーワード検索（タイトル、要約、文字起こしの中身）
+
+    // 3. キーワード検索（タイトル、要約、文字起こしの中身） (HEAD由来)
     if (_searchQuery.isNotEmpty) {
       query = query.and().group((q) => q
           .titleContains(_searchQuery, caseSensitive: false)
@@ -139,21 +161,8 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  void _initRecordingStream() {
-    final isar = Isar.getInstance();
-    if (isar != null) {
-      setState(() {
-        _recordingStream = isar.recordings
-            .where()
-            .filter()
-            .needsCloudDeleteEqualTo(false)
-            .sortByCreatedAtDesc()
-            .watch(fireImmediately: true);
-      });
-    }
-  }
-
   Future<void> _quietSyncOnStartup() async {
+    if (_currentUserId == null) return;
     // ネット接続確認
     final bool isConnected = await InternetConnection().hasInternetAccess;
     if (!isConnected) {
@@ -167,8 +176,8 @@ class _HomeScreenState extends State<HomeScreen> {
         final tokenService = GetIdtokenService();
         final token = await tokenService.getIdtoken();
         if (token != null) {
-          await _repository.syncPendingDeletions(token);
-          await _repository.syncPendingChanges(token);
+          await _repository.syncPendingDeletions(token, _currentUserId!);
+          await _repository.syncPendingChanges(token, _currentUserId!);
           await _syncMetadataList();
         }
       } catch (e) {
@@ -177,7 +186,7 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
-  // ★追加: 一時的なユニークIDを生成する関数
+  // 一時的なユニークIDを生成する関数
   String _generateUniqueId() {
     final random = Random();
     const chars = 'abcdefghijklmnopqrstuvwxyz0123456789';
@@ -213,7 +222,7 @@ class _HomeScreenState extends State<HomeScreen> {
                   if (isar != null) {
                     await isar.writeTxn(() async {
                       recording.title = newTitle;
-                      recording.updatedAt = DateTime.now();
+                      recording.updatedAt = DateTime.now().toUtc();
                       recording.needsCloudUpdate = true;
                       await isar.recordings.put(recording);
                     });
@@ -345,6 +354,42 @@ class _HomeScreenState extends State<HomeScreen> {
 
   // 長押し時のメニューシート
   void _showItemMenu(Recording recording) {
+    final bool isOwner = _currentUserId != null && recording.sourceOriginalId == null;
+    // 共有されたアイテムの場合、削除・変更できないようにする
+    if (!isOwner){
+      showModalBottomSheet(
+        context: context,
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+        ),
+        builder: (context) {
+          return SafeArea(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Padding(
+                  padding: EdgeInsets.all(16.0),
+                  child: Text(
+                    "共有されたアイテムのため\n変更や削除はできません",
+                    textAlign: TextAlign.center,
+                    style: TextStyle(color: Colors.grey, fontSize: 16),
+                  ),
+                ),
+                const Divider(),
+                ListTile(
+                  leading: const Icon(Icons.close),
+                  title: const Text('閉じる'),
+                  onTap: () {
+                    Navigator.pop(context);
+                  },
+                ),
+              ],
+            ),
+          );
+        },
+      );
+      return;
+    }
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -410,7 +455,7 @@ class _HomeScreenState extends State<HomeScreen> {
   // --- origin/main由来の機能: 同期 ---
 
   Future<void> _syncMetadataList() async {
-    if (_isSyncing) return;
+    if (_isSyncing|| _currentUserId == null) return;
 
     setState(() => _isSyncing = true);
     try {
@@ -418,7 +463,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final token = await tokenService.getIdtoken();
 
       if (token != null) {
-        await _repository.syncMetadataList(token);
+        await _repository.syncMetadataList(token, _currentUserId!);
         print('メタデータ同期完了');
       } else {
         print('未ログインのため同期スキップ');
@@ -440,18 +485,15 @@ class _HomeScreenState extends State<HomeScreen> {
   // --- 共通機能 ---
 
   Future<void> _importFile() async {
-    // try {
-    //   final result = await FilePicker.platform.pickFiles(
-    //     type: FileType.custom,
-    //     allowedExtensions: ['mp3', 'm4a', 'wav', 'aac'], 
-    //   );
-
-    //   if (result != null && result.files.single.path != null) {
-    //     await _processImport(result.files.single.path!, result.files.single.name);
-    //   }
+    if (_currentUserId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('初期化中です。少々お待ちください。')),
+      );
+      return;
+    }
     try {
     final result = await FilePicker.platform.pickFiles(
-      type: FileType.audio, // customではなくaudioに変更
+      type: FileType.audio, 
     );
 
     if (result != null && result.files.single.path != null) {
@@ -465,7 +507,7 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _processImport(String originalPath, String fileName) async {
     final ownerName = await UserService().getPreferredUsername();
       try{
-        if (ownerName == null) {
+        if (ownerName == null || _currentUserId == null) {
           if (!mounted) return;
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('ユーザー情報が取得できません。再ログインしてください。')),
@@ -479,11 +521,9 @@ class _HomeScreenState extends State<HomeScreen> {
 
         // アプリ内の安全な場所にコピーする
         final appDir = await getApplicationDocumentsDirectory();
-        // final newPath = '${appDir.path}/imported_$fileName';
         String ext = p.extension(originalPath);
         String safeFileName = fileName;
         if (!safeFileName.toLowerCase().endsWith(ext.toLowerCase())) {
-           // 含まれていなければ、お尻にくっつける
           safeFileName = '$safeFileName$ext';
         }
         final newPath = '${appDir.path}/imported_$safeFileName';
@@ -496,10 +536,11 @@ class _HomeScreenState extends State<HomeScreen> {
             ..title = "インポート: $fileName" 
             ..filePath = newPath
             ..ownerName = ownerName
+            ..ownerId = _currentUserId
             ..durationSeconds = 0
             ..createdAt = DateTime.now()
             ..updatedAt = DateTime.now()
-            ..status = "processing";
+            ..status = "pending";
 
           await isar.writeTxn(() async {
             await isar.recordings.put(newRecording);
@@ -519,6 +560,13 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _pickAndSaveImage(ImageSource source) async {
+    if (_currentUserId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('ユーザー情報を取得中です')),
+      );
+      return;
+    }
+    
     try {
       final picker = ImagePicker();
       final XFile? photo = await picker.pickImage(source: source);
@@ -542,13 +590,7 @@ class _HomeScreenState extends State<HomeScreen> {
       final savedImage = await File(photo.path).copy('${appDir.path}/$fileName');
 
       // ユーザーIDを取得して ownerName に入れる
-      String currentUserId = 'unknown_user';
-      try {
-          final user = await Amplify.Auth.getCurrentUser();
-          currentUserId = user.userId;
-      } catch(e) {
-          print("ユーザーID取得失敗(画像保存): $e");
-      }
+      final ownerName = await UserService().getPreferredUsername() ?? "Unknown";
 
       final isar = Isar.getInstance();
       if (isar != null) {
@@ -559,8 +601,8 @@ class _HomeScreenState extends State<HomeScreen> {
           ..createdAt = DateTime.now()
           ..updatedAt = DateTime.now()
           ..lastSyncTime = DateTime.fromMillisecondsSinceEpoch(0)
-          ..ownerName = currentUserId
-          // ★修正: nullだと重複扱いされるため、一時的なIDを生成
+          ..ownerName = ownerName
+          ..ownerId = _currentUserId
           ..remoteId = _generateUniqueId()
           ..status = 'pending';
 
@@ -624,14 +666,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Widget _buildStatusChip(Recording recording) {
     if (recording.remoteId == null) {
-      // 1. クラウドIDがない = 未保存
       return _statusBadge(Icons.cloud_off, '未保存', Colors.grey);
     } else if (recording.transcripts.isEmpty) {
-      // 2. IDはあるが、データがまだローカルにない = 未解析
-      // アイコンを「待機中/解析」っぽいものに変更
       return _statusBadge(Icons.analytics_outlined, '未解析', Colors.orange);
     } else {
-      // 3. 文字起こしデータがある = 完了
       return _statusBadge(Icons.check_circle, '完了', Colors.green);
     }
   }
@@ -684,15 +722,6 @@ class _HomeScreenState extends State<HomeScreen> {
              icon: const Icon(Icons.file_upload),
              tooltip: "ファイルをインポート",
              onPressed: _importFile,
-          ),
-          IconButton(
-            icon: const Icon(Icons.share),
-            tooltip: "リストを共有",
-            onPressed: () {
-               ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('リスト全体の共有機能は開発中です')),
-                );
-            },
           ),
           IconButton(
             icon: const Icon(Icons.logout),
@@ -761,7 +790,7 @@ class _HomeScreenState extends State<HomeScreen> {
             ),
           ),
 
-          // 2. 元々のリスト表示部分 (Expandedで囲むのが重要！)
+          // 2. リスト表示部分 (HEADとMainを統合)
           Expanded(
             child: _recordingStream == null
                 ? const Center(child: CircularProgressIndicator())
@@ -781,12 +810,17 @@ class _HomeScreenState extends State<HomeScreen> {
                         itemBuilder: (context, index) {
                           final recording = recordings[index];
                           
-                          // ファイル名やアイコンの判定（既存のコード）
+                          // ファイル名やアイコンの判定（Main + HEAD）
                           final path = recording.filePath.toLowerCase();
                           final fileName = path.split('/').last;
                           IconData leadIcon = Icons.mic;
                           Color iconColor = Colors.blue;
-                          if (path.endsWith('.jpg') || path.endsWith('.jpeg') || path.endsWith('.png')) {
+
+                          if (recording.sourceOriginalId != null && recording.sourceOriginalId!.isNotEmpty) {
+                            // 共有されたアイテム (Main由来)
+                            leadIcon = Icons.folder_shared; 
+                            iconColor = Colors.teal;
+                          } else if (path.endsWith('.jpg') || path.endsWith('.jpeg') || path.endsWith('.png')) {
                             leadIcon = Icons.image;
                             iconColor = Colors.purple;
                           } else if (fileName.startsWith('imported_')) {
@@ -794,22 +828,18 @@ class _HomeScreenState extends State<HomeScreen> {
                             iconColor = Colors.orange;
                           }
 
-                          // ★追加: 文字起こし内でのヒット判定
+                          // ★追加: 文字起こし内でのヒット判定 (HEAD由来)
                           bool hasHitInTranscript = false;
                           String? hitTextSnippet;
 
                           if (_searchQuery.isNotEmpty) {
-                            // 文字起こしリストの中から、検索ワードを含む最初のセグメントを探す
                             for (var segment in recording.transcripts) {
                               if (segment.text.toLowerCase().contains(_searchQuery.toLowerCase())) {
                                 hasHitInTranscript = true;
-                                // ヒットした箇所の抜粋を作る（オプション）
-                                // 長すぎる場合はカットするなどの処理も可能ですが、まずはシンプルに
                                 hitTextSnippet = "本文に「$_searchQuery」が含まれます";
-                                break; // 1つ見つかればOK
+                                break; 
                               }
                             }
-                            // もしtranscriptsが空でも、summaryにある場合もチェックしても良いかも
                             if (!hasHitInTranscript && recording.summary != null) {
                               if (recording.summary!.toLowerCase().contains(_searchQuery.toLowerCase())) {
                                   hasHitInTranscript = true;
@@ -823,18 +853,16 @@ class _HomeScreenState extends State<HomeScreen> {
                               leading: Icon(leadIcon, color: iconColor),
                               title: Text(recording.title),
                               
-                              // ★修正: サブタイトル部分を書き換え
                               subtitle: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  // 1. もともとの日付表示
+                                  // 日付表示
                                   Text(DateFormat('yyyy/MM/dd HH:mm').format(recording.createdAt)),
                                   
-                                  // ★追加: ここにステータスバッジを入れます
-                                  const SizedBox(height: 4), // 少し隙間をあける
+                                  const SizedBox(height: 4), 
                                   _buildStatusChip(recording),
                                   
-                                  // 2. ヒットした場合のメッセージ表示
+                                  // ヒットした場合のメッセージ表示
                                   if (hasHitInTranscript && hitTextSnippet != null)
                                     Padding(
                                       padding: const EdgeInsets.only(top: 4.0),

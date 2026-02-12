@@ -12,8 +12,12 @@ import 'package:scrollable_positioned_list/scrollable_positioned_list.dart';
 import 'package:internet_connection_checker_plus/internet_connection_checker_plus.dart';
 import 'package:voice_app/models/transcript_segment.dart';
 import 'package:voice_app/repositories/recording_repository.dart';
+import 'package:voice_app/services/processing_service.dart';
 import 'package:voice_app/services/s3download_service.dart';
+import 'package:voice_app/services/user_service.dart';
 import 'package:voice_app/utils/network_utils.dart';
+import 'package:voice_app/widgets/estimated_progress_bar.dart';
+import 'package:voice_app/widgets/transcription_skelton.dart';
 import '../services/gemini_service.dart';
 import '../models/recording.dart';
 import 'share_screen.dart';
@@ -63,6 +67,7 @@ class _ResultScreenState extends State<ResultScreen> {
   
   // 翻訳用言語マップ (HEAD由来)
   final Map<String, String> _supportedLanguages = {
+    'ja': '日本語',
     'en': '英語',
     'zh': '中国語(简体)',
     'zh-TW' : '中国語(繁體)',
@@ -88,7 +93,12 @@ class _ResultScreenState extends State<ResultScreen> {
   Timer? _scrollResumeTimer;
   int _lastAutoScrolledIndex = -1;
 
-  
+  String? _currentUserId;
+
+  String _getLanguageName(String? code) {
+    if (code == null || code.isEmpty) return '原文';
+    return _supportedLanguages[code] ?? code; // マップになければコードをそのまま表示
+  }
 
   @override
   void initState() {
@@ -123,6 +133,33 @@ class _ResultScreenState extends State<ResultScreen> {
     }
     
     _autoSyncIfNeeded();
+
+    // userId取得
+    _fetchCurrentUserId();
+  }
+
+  @override
+  void dispose() {
+    _audioPlayer.dispose();
+    _editController.dispose();
+    _summaryController.dispose();
+    // _scrollController.dispose();
+    _scrollResumeTimer?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _fetchCurrentUserId() async {
+    try {
+      final userId = await UserService().getCurrentUserSub(); 
+      
+      if (mounted) {
+        setState(() {
+          _currentUserId = userId;
+        });
+      }
+    } catch (e) {
+      print("ユーザーID取得エラー: $e");
+    }
   }
 
   // --- Audio Player Logic (HEAD由来) ---
@@ -152,6 +189,11 @@ class _ResultScreenState extends State<ResultScreen> {
   //     print("オーディオ読み込みエラー: $e");
   //   }
   // }
+
+  bool get _isOwner {
+    if (widget.recording.remoteId == null) return true;
+    return _currentUserId != null && widget.recording.sourceOriginalId == null;
+  }
 
   Future<void> _initAudioPlayer() async {
     try {
@@ -209,35 +251,67 @@ class _ResultScreenState extends State<ResultScreen> {
     }
   }
 
+  List<TranscriptSegment> _cachedSegments = [];
+
+  void _prepareSegments() {
+    if (_cachedSegments.isEmpty) {
+      final list = widget.recording.transcripts.toList();
+      list.sort((a, b) => a.startTimeMs.compareTo(b.startTimeMs));
+      _cachedSegments = list;
+    }
+  }
+
   void _setupAudioListeners() {
+    _prepareSegments();
     _audioPlayer.positionStream.listen((p) {
-      if (mounted) setState(() => _position = p);
         // --- ここから追加したスクロール命令 ---
+        if (!mounted) return;
+        if (_currentMode != DisplayMode.transcription) return;
         if (!_isUserScrolling){
           final ms = p.inMilliseconds;
-          final segments = widget.recording.transcripts.toList();
-          segments.sort((a, b) => a.startTimeMs.compareTo(b.startTimeMs));
+          if (_cachedSegments.isEmpty) _prepareSegments();
+          // final segments = widget.recording.transcripts.toList();
+          // segments.sort((a, b) => a.startTimeMs.compareTo(b.startTimeMs));
 
-          int activeIndex = segments.lastIndexWhere((s) => ms >= s.startTimeMs);
+          int activeIndex = _cachedSegments.lastIndexWhere((s) => ms >= s.startTimeMs);
 
           // if (activeIndex != -1 && _scrollController.hasClients) {
-          if (activeIndex != -1 && activeIndex != _lastAutoScrolledIndex) {
-            _lastAutoScrolledIndex = activeIndex;
+          // if (activeIndex != -1 && activeIndex != _lastAutoScrolledIndex) {
           //   if (_scrollController.hasClients) {
           //     _scrollController.animateTo(
           //       activeIndex * 120.0, 
           //       duration: const Duration(milliseconds: 300),
           //       curve: Curves.easeInOut,
           //     );
-            _itemScrollController.scrollTo(
-              index: activeIndex, // 何番目の行か指定
-              duration: const Duration(milliseconds: 300),
-              curve: Curves.easeInOut,
-              alignment: 0.1,
-            );
+
+          if (ms > 100000 && ms < 105000) {
+            print("⏱️ Time: $ms ms | Index: $activeIndex (前回: $_lastAutoScrolledIndex)");
+            if (activeIndex != -1) {
+              print("   Target: ${_cachedSegments[activeIndex].text}");
+            }
+          }
+
+            if (activeIndex != -1 && activeIndex != _lastAutoScrolledIndex) {
+              
+              
+              if (_itemScrollController.isAttached) {
+                try {
+                  _itemScrollController.scrollTo(
+                    index: activeIndex,
+                    duration: const Duration(milliseconds: 300),
+                    curve: Curves.easeInOut,
+                    alignment: 0.1, 
+                  );
+                  _lastAutoScrolledIndex = activeIndex;
+                } catch (e) {
+                  print("❌ スクロールエラー: $e");
+                }
+            } else {
+              // デタッチされている場合は、無理に実行せず、ログも出さない（あるいは1回だけ出す）
+              // print("⚠️ Controllerがデタッチされています - スキップ");
+            }
           }
         }
-        // --- ここまで ---
     });
 
     _audioPlayer.durationStream.listen((d) {
@@ -468,141 +542,208 @@ class _ResultScreenState extends State<ResultScreen> {
     );
   }
 
-Future<void> s3Upload(String title) async {
-  setState(() {
-    _isUploading = true;
-    _uploadStatusText = '保存中...';
-  });
-  // ファイルパスの取得（TODO: 念のため空チェックいれる）
-  final file = File(widget.recording.filePath);
+  Future<void> s3Upload(String title) async {
+    setState(() {
+      _isUploading = true;
+      _uploadStatusText = '保存中...';
+    });
+    
+    try {
+      final isar = Isar.getInstance();
+      if (isar != null) {
+        // バックグラウンド処理サービスを開始
+        // (アップロード -> 音声解析 -> 結果取得 までを裏側でやります)
+        ProcessingService().startUploadAndProcessing(
+          widget.recording, 
+          isar, 
+          _repository
+        );
 
-  // トークンの取得処理
-  try {
-    final tokenService = GetIdtokenService();
-    final token = await tokenService.getIdtoken();
-
-          // トークンがない場合（未ログインなど）はここで終了
-          if (token == null) {
-            print("トークンが取得できませんでした（未ログイン）");
-            
-            if (!mounted) return;
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('ログインが必要です')),
-            );
-            return;
-          }
-
-          print("トークン取得成功: ${token.substring(0, 10)}...");
-
-          // アップロード処理
-          final uploadService = S3UploadService();
-
-          String? existingId = widget.recording.remoteId;
-          
-          // アップロード実行
-          final result = await uploadService.uploadAudioFile(
-            file, 
-            title,
-            idToken: token,
-            recordingId: existingId,
-          );
-
-          // 成功時の処理
-          final recordingId = result['recording_id'];
-          final s3Key = result['s3_key'];
-          
-          print("保存完了！ ID: $recordingId");
-
-          await isar.writeTxn(() async {
-            if (widget.recording.remoteId == null){
-              widget.recording.remoteId = recordingId;
-            }
-            
-            // s3AudioPath に s3Key (パス) を保存
-            widget.recording.s3AudioUrl = s3Key;
-
-            await isar.recordings.put(widget.recording);
-          });
-
-          if (!mounted) return;
-            ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(content: Text('アップロード完了 (ID: $recordingId)')),
-            );
-
-          print("アップロード完了。AI処理待ち開始");
-
-          await _pollForUpdates(recordingId);
-
-        } catch (e) {
-          // エラーハンドリング
-          // print("アップロード失敗: $e");
-          if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('エラーが発生しました: $e')),
-          );
-        } finally {
-          if (mounted) {
-            setState(() {
-              // _isLoading = false;
-              _isUploading = false;
-              _uploadStatusText = 'アップロード';
-            });
-          }
-        }
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('アップロードを開始しました。処理はバックグラウンドで継続されます。')),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('エラー: $e')));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isUploading = false;
+          _uploadStatusText = '保存';
+        });
+      }
+    }
   }
 
-  Future<void> _pollForUpdates(String recordingId) async {
+  Future<void> _startBackgroundUpload() async {
+    if (_isUploading) return;
     setState(() {
-      _uploadStatusText = '処理中...';
+      _isUploading = true; 
     });
 
-    const int maxAttempts = 30;
-    const Duration interval = Duration(seconds: 5);
+    try {
+      final isar = Isar.getInstance();
+      if (isar != null) {
+        // サービス経由で開始（待機しない）
+        ProcessingService().startUploadAndProcessing(
+          widget.recording, 
+          isar, 
+          _repository
+        );
 
-    for (int i = 0; i < maxAttempts; i++){
-      try {
-        print("ポーリング試行: ${i + 1}/$maxAttempts");
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('解析を開始しました。一覧画面に戻っても処理は続きます。')),
+        );
 
-        final tokenService = GetIdtokenService();
-        final token = await tokenService.getIdtoken();
-
-        // isarから最新を取得
-        final latestRecording = await isar.recordings.get(widget.recording.id);
-
-        if (token != null && latestRecording != null) {
-          await _repository.syncTranscriptionAndSummary(latestRecording, token);
-
-          // データが入ったかチェック
-          final checkRecording = await isar.recordings.get(widget.recording.id);
-
-          if (checkRecording != null && checkRecording.transcripts.isNotEmpty) {
-            print("文字起こしデータ受信完了");
-            if (!mounted) return;
-
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('文字起こしが完了しました！')),
-            );
-
-            setState(() {
-              _currentMode = DisplayMode.transcription;
-            });
-
-            return;
-          }
-        }
-      } catch (e) {
-        print('ポーリング中のエラー(続行): $e');
+        // 即座に一覧に戻る場合
+        // Navigator.pop(context); 
       }
-      await Future.delayed(interval);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('開始エラー: $e')));
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isUploading = false; // ボタンのローディングは解除
+        });
+      }
     }
-    // 回数切れ
-    if (mounted){
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('処理に時間がかかっています。後ほど「最新情報を確認」ボタンを押してください。')),
-      );
-    }
-
   }
+
+// Future<void> s3Upload(String title) async {
+//   setState(() {
+//     _isUploading = true;
+//     _uploadStatusText = '保存中...';
+//   });
+//   // ファイルパスの取得（TODO: 念のため空チェックいれる）
+//   final file = File(widget.recording.filePath);
+
+//   // トークンの取得処理
+//   try {
+//     final tokenService = GetIdtokenService();
+//     final token = await tokenService.getIdtoken();
+
+//           // トークンがない場合（未ログインなど）はここで終了
+//           if (token == null) {
+//             print("トークンが取得できませんでした（未ログイン）");
+            
+//             if (!mounted) return;
+//             ScaffoldMessenger.of(context).showSnackBar(
+//               const SnackBar(content: Text('ログインが必要です')),
+//             );
+//             return;
+//           }
+
+//           print("トークン取得成功: ${token.substring(0, 10)}...");
+
+//           // アップロード処理
+//           final uploadService = S3UploadService();
+
+//           String? existingId = widget.recording.remoteId;
+          
+//           // アップロード実行
+//           final result = await uploadService.uploadAudioFile(
+//             file, 
+//             title,
+//             idToken: token,
+//             recordingId: existingId,
+//           );
+
+//           // 成功時の処理
+//           final recordingId = result['recording_id'];
+//           final s3Key = result['s3_key'];
+          
+//           print("保存完了！ ID: $recordingId");
+
+//           await isar.writeTxn(() async {
+//             if (widget.recording.remoteId == null){
+//               widget.recording.remoteId = recordingId;
+//             }
+            
+//             // s3AudioPath に s3Key (パス) を保存
+//             widget.recording.s3AudioUrl = s3Key;
+
+//             await isar.recordings.put(widget.recording);
+//           });
+
+//           if (!mounted) return;
+//             ScaffoldMessenger.of(context).showSnackBar(
+//               SnackBar(content: Text('アップロード完了 (ID: $recordingId)')),
+//             );
+
+//           print("アップロード完了。AI処理待ち開始");
+
+//           await _pollForUpdates(recordingId);
+
+//         } catch (e) {
+//           // エラーハンドリング
+//           // print("アップロード失敗: $e");
+//           if (!mounted) return;
+//           ScaffoldMessenger.of(context).showSnackBar(
+//             SnackBar(content: Text('エラーが発生しました: $e')),
+//           );
+//         } finally {
+//           if (mounted) {
+//             setState(() {
+//               // _isLoading = false;
+//               _isUploading = false;
+//               _uploadStatusText = 'アップロード';
+//             });
+//           }
+//         }
+//   }
+
+//   Future<void> _pollForUpdates(String recordingId) async {
+//     setState(() {
+//       _uploadStatusText = '処理中...';
+//     });
+
+//     const int maxAttempts = 30;
+//     const Duration interval = Duration(seconds: 5);
+
+//     for (int i = 0; i < maxAttempts; i++){
+//       try {
+//         print("ポーリング試行: ${i + 1}/$maxAttempts");
+
+//         final tokenService = GetIdtokenService();
+//         final token = await tokenService.getIdtoken();
+
+//         // isarから最新を取得
+//         final latestRecording = await isar.recordings.get(widget.recording.id);
+
+//         if (token != null && latestRecording != null) {
+//           await _repository.syncTranscriptionAndSummary(latestRecording, token);
+
+//           // データが入ったかチェック
+//           final checkRecording = await isar.recordings.get(widget.recording.id);
+
+//           if (checkRecording != null && checkRecording.transcripts.isNotEmpty) {
+//             print("文字起こしデータ受信完了");
+//             if (!mounted) return;
+
+//             ScaffoldMessenger.of(context).showSnackBar(
+//               const SnackBar(content: Text('文字起こしが完了しました！')),
+//             );
+
+//             setState(() {
+//               _currentMode = DisplayMode.transcription;
+//             });
+
+//             return;
+//           }
+//         }
+//       } catch (e) {
+//         print('ポーリング中のエラー(続行): $e');
+//       }
+//       await Future.delayed(interval);
+//     }
+//     // 回数切れ
+//     if (mounted){
+//       ScaffoldMessenger.of(context).showSnackBar(
+//         const SnackBar(content: Text('処理に時間がかかっています。後ほど「最新情報を確認」ボタンを押してください。')),
+//       );
+//     }
+
+//   }
 
   Future<void> _handleTranslation(String targetLang) async {
     final tokenService = GetIdtokenService();
@@ -718,6 +859,7 @@ Future<void> s3Upload(String title) async {
     //   );
     //   return;
     // }
+    final String originName = _getLanguageName(recording.originalLanguage);
 
     showDialog(
       context: context,
@@ -730,13 +872,16 @@ Future<void> s3Upload(String title) async {
                 Navigator.pop(context);
                 _handleTranslationRequest('original', '原文');
               },
-              child: const Padding(
-                padding: EdgeInsets.symmetric(vertical: 8.0),
-                child: Text('原文を表示', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8.0),
+                child: Text('原文 ($originName)', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
               ),
             ),
             const Divider(),
             ..._supportedLanguages.entries.map((entry) {
+              if (entry.key == recording.originalLanguage) {
+                return const SizedBox.shrink(); 
+              }
               return SimpleDialogOption(
                 onPressed: () {
                   Navigator.pop(context);
@@ -754,7 +899,8 @@ Future<void> s3Upload(String title) async {
     );
   }
 
-  Future<void> _showSegmentTranslationDialog(int index) async {
+  Future<void> _showSegmentTranslationDialog(int index, Recording recording) async {
+    final String originName = _getLanguageName(recording.originalLanguage);
     showDialog(
       context: context,
       builder:(context) {
@@ -773,6 +919,9 @@ Future<void> s3Upload(String title) async {
             ),
             const Divider(),
             ..._supportedLanguages.entries.map((entry) {
+              if (entry.key == recording.originalLanguage) {
+                return const SizedBox.shrink(); 
+              }
               return SimpleDialogOption(
                 onPressed: () {
                   Navigator.pop(context);
@@ -1018,37 +1167,65 @@ Future<void> s3Upload(String title) async {
     }
 
     if (segments.isEmpty) {
-      if (recording.remoteId != null) {
+      final status = recording.status;
+      // if (recording.remoteId != null) {
+        if (status == 'uploading' || status == 'processing'){
+          return EstimatedProgressBar(status: status!);
+        }
+        if (status == 'completed' || status == 'processing'){
+          return const TranscriptionSkeleton();
+        }
+
+        if (status == 'pending' || status == null || status.isEmpty) {
         return Center(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              const CircularProgressIndicator(),
-              const SizedBox(height: 20),
-              const Text(
-                "クラウドで処理中、または同期中です...",
-                style: TextStyle(color: Colors.grey),
+            children: const [
+              Icon(Icons.cloud_upload_outlined, size: 64, color: Colors.grey),
+              SizedBox(height: 20),
+              Text(
+                "文字起こしデータはまだありません",
+                style: TextStyle(color: Colors.grey, fontSize: 16),
               ),
-              const SizedBox(height: 20),
-              ElevatedButton.icon(
-                onPressed: _isLoading ? null : _manualSync,
-                icon: const Icon(Icons.refresh),
-                label: const Text("最新情報を確認"),
+              SizedBox(height: 10),
+              Text(
+                "「保存」ボタンを押して\n解析を開始してください",
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.grey, fontSize: 14),
               ),
             ],
           ),
         );
       }
 
-      if (recording.transcription != null && recording.transcription!.isNotEmpty){
-        return SingleChildScrollView(
-          padding: const EdgeInsets.all(16),
-          child: Text(recording.transcription!),
+      if (status == 'failed') {
+        return Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: const [
+              Icon(Icons.error_outline, size: 48, color: Colors.redAccent),
+              SizedBox(height: 16),
+              Text("解析に失敗しました", style: TextStyle(color: Colors.red)),
+            ],
+          ),
         );
       }
 
+      // その他のエラー (デバッグ用にstatusを表示)
       return Center(
-        child: Text("文字起こしデータがありません"),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Text("データが表示できません"),
+            Text("Status: $status", style: const TextStyle(fontSize: 10, color: Colors.grey)),
+            const SizedBox(height: 20),
+            ElevatedButton.icon(
+              onPressed: _isLoading ? null : _manualSync,
+              icon: const Icon(Icons.refresh),
+              label: const Text("再読み込み"),
+            ),
+          ],
+        ),
       );
     }
 
@@ -1069,10 +1246,10 @@ Future<void> s3Upload(String title) async {
           // 5秒後にフラグオフ、自動スクロール開始
           _scrollResumeTimer = Timer(const Duration(seconds: 5), () {
             if (mounted) {
-              setState(() {
+              // setState(() {
                 _isUserScrolling = false;
                 _lastAutoScrolledIndex = -1;
-              });
+              // });
             }
           });
         }
@@ -1080,6 +1257,7 @@ Future<void> s3Upload(String title) async {
       },
       child: ScrollablePositionedList.builder(
         key: ValueKey(_currentSearchKeyword), // 検索ワード変更時にリビルド
+        // key: const PageStorageKey('transcription_list'),
         itemScrollController: _itemScrollController, // コントローラーセット
         itemPositionsListener: _itemPositionsListener, // リスナーセット
         itemCount: segments.length,
@@ -1148,12 +1326,12 @@ Future<void> s3Upload(String title) async {
                       constraints: const BoxConstraints(),
                       padding: EdgeInsets.zero,
                       tooltip: "この行を翻訳",
-                      onPressed: () => _showSegmentTranslationDialog(index),
+                      onPressed: () => _showSegmentTranslationDialog(index, recording),
                     ),
 
                     const Spacer(),
 
-                    if(!isEditing && !_isProcessing && !isTranslateMode) 
+                    if(!isEditing && !_isProcessing && !isTranslateMode && _isOwner) 
                       GestureDetector(
                         onTap: () {
                           setState(() {
@@ -1248,13 +1426,36 @@ Future<void> s3Upload(String title) async {
   Widget _buildSummaryView(Recording recording) {
     final hasSummary = recording.summary != null && recording.summary!.isNotEmpty;
     final displayText = hasSummary ? recording.summary! : "要約はまだありません（同期中または生成待ち）";
-            
+    
+    final String currentLang = _currentDisplayLanguage;
+    final bool isTranslateMode = currentLang != 'original';
+
+    String contentText = "";
+
+    if (isTranslateMode) {
+      // 翻訳データを探す
+      final translation = recording.summaryTranslations?.firstWhere(
+        (t) => t.langCode == currentLang,
+        orElse: () => TranslationData(), // 見つからない場合
+      );
+
+      if (translation != null && translation.text != null && translation.text!.isNotEmpty) {
+        contentText = translation.text!;
+      } else {
+        // 翻訳データがまだ無い場合（原文フォールバック + 注釈）
+        contentText = "${recording.summary ?? '要約なし'}\n\n(※この言語の要約翻訳はまだありません)";
+      }
+    } else {
+      // 原文
+      contentText = recording.summary ?? "要約はまだありません（同期中または生成待ち）";
+    }
+
     return SingleChildScrollView(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           // 編集ボタン（表示モードかつデータがある場合）
-          if (!_isEditingSummary && !_isProcessing)
+          if (_isOwner && !_isEditingSummary && !_isProcessing)
             Padding(
               padding: const EdgeInsets.only(top: 8, right: 16),
               child: TextButton.icon(
@@ -1327,7 +1528,7 @@ Future<void> s3Upload(String title) async {
                   ],
                 )
               : Text(
-                displayText,
+                contentText,
                 style: const TextStyle(fontSize: 16, height: 1.5),
               ),
             ),
@@ -1436,24 +1637,36 @@ Future<void> s3Upload(String title) async {
          final recording = snapshot.data;
          if (recording == null) return const Scaffold(body: Center(child: Text('データが見つかりません')));
          
-         // 共有用テキストの準備
+         // 共有用データ準備
+         final sortedSegments = recording.transcripts.toList()
+          ..sort((a, b) => a.startTimeMs.compareTo(b.startTimeMs));
+         _cachedSegments = sortedSegments; // キャッシュ更新
+
          final String currentSummary = recording.summary ?? "なし";
          final String currentTrans = recording.transcripts.map((e) => "${e.speaker}: ${e.text}").join("\n");
          final String shareContent = "【要約】\n$currentSummary\n\n【全文】\n$currentTrans";
 
         return Scaffold(
-          // 1. ヘッダー (シンプルに)
+          // 1. ヘッダー
           appBar: AppBar(
              title: Text(recording.title, overflow: TextOverflow.ellipsis),
              actions: [
-               // ★作成した保存/同期ボタンを配置
-               _buildHeaderActionButton(recording),
-
-               // 共有ボタン
-               IconButton(
+               _buildHeaderActionButton(recording), // アップロード/同期ボタン
+               IconButton( // 共有ボタン
                  icon: const Icon(Icons.share), 
                  onPressed: () { 
-                   Navigator.push(context, MaterialPageRoute(builder: (context) => ShareScreen(textContent: shareContent))); 
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => ShareScreen(
+                          textContent: shareContent,
+                          recordingId: recording.remoteId, 
+                          filePath: recording.filePath,    
+                          hasTranscript: recording.transcripts.isNotEmpty,         
+                          isOwner: _isOwner,
+                        ),
+                      ),
+                    );
                  }
                ),
              ],
@@ -1461,12 +1674,20 @@ Future<void> s3Upload(String title) async {
           
           body: Column(
             children: [
-               // 2. プレイヤーUI (コンパクト化)
+               // 2. プレイヤーUI (HEADのデザイン)
                Container(
                  color: Colors.grey.shade50,
                  padding: const EdgeInsets.only(bottom: 0),
                  child: _isImage 
-                   ? Image.file(File(recording.filePath), height: 200, fit: BoxFit.contain) 
+                   ? ClipRRect(
+                        borderRadius: BorderRadius.circular(8),
+                        child: Image.file(
+                          File(recording.filePath),
+                          height: 200,
+                          fit: BoxFit.contain,
+                          errorBuilder: (c, o, s) => const SizedBox(height:100, child: Center(child: Icon(Icons.broken_image))),
+                        ),
+                      )
                    : Column(
                        children: [
                          Row(
@@ -1476,17 +1697,25 @@ Future<void> s3Upload(String title) async {
                                onPressed: _togglePlay
                              ),
                              Expanded(
-                               // ★シークバーを細く・小さくする設定
                                child: SliderTheme(
                                  data: SliderTheme.of(context).copyWith(
-                                   trackHeight: 2.0, // 線の太さを2pxに
-                                   thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6.0), // つまみを小さく
-                                   overlayShape: const RoundSliderOverlayShape(overlayRadius: 14.0), // タップ判定を少し小さく
+                                   trackHeight: 2.0, 
+                                   thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 6.0), 
+                                   overlayShape: const RoundSliderOverlayShape(overlayRadius: 14.0), 
                                  ),
-                                 child: Slider(
-                                   value: _position.inMilliseconds.toDouble().clamp(0, _duration.inMilliseconds.toDouble()), 
-                                   max: _duration.inMilliseconds.toDouble(), 
-                                   onChanged: (v) => _audioPlayer.seek(Duration(milliseconds:v.toInt()))
+                                 child: StreamBuilder<Duration>(
+                                  stream: _audioPlayer.positionStream,
+                                  builder: (context, snapshot) {
+                                    final position = snapshot.data ?? Duration.zero;
+                                    final currentPos = position.inMilliseconds.toDouble();
+                                    final maxDuration = _duration.inMilliseconds.toDouble();
+                                    final sliderValue = currentPos.clamp(0.0, maxDuration > 0 ? maxDuration : 0.0);
+                                    return Slider(
+                                      value: sliderValue, 
+                                      max: maxDuration > 0 ? maxDuration : 1.0, 
+                                      onChanged: (v) => _audioPlayer.seek(Duration(milliseconds:v.toInt()))
+                                    );
+                                  }
                                  ),
                                ),
                              ),
@@ -1497,7 +1726,10 @@ Future<void> s3Upload(String title) async {
                            child: Row(
                              mainAxisAlignment:MainAxisAlignment.spaceBetween, 
                              children: [
-                               Text(_formatDuration(_position), style: const TextStyle(fontSize: 12)), 
+                               StreamBuilder<Duration>(
+                                  stream: _audioPlayer.positionStream,
+                                  builder: (context, snapshot) => Text(_formatDuration(snapshot.data ?? Duration.zero), style: const TextStyle(fontSize: 12)),
+                                ),
                                Text(_formatDuration(_duration), style: const TextStyle(fontSize: 12))
                              ]
                            )
@@ -1506,28 +1738,25 @@ Future<void> s3Upload(String title) async {
                      )
                ),
                
-               // 3. 検索エリア (出し入れ機能付き)
+               // 3. 検索エリア (HEAD機能)
                AnimatedContainer(
                  duration: const Duration(milliseconds: 300),
                  color: Colors.white,
                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                 // 表示フラグによって中身を切り替え
                  child: _isSearchBarVisible
-                   ? // ■ 検索バーが表示されている時
-                     TextField(
+                   ? TextField(
                        controller: _localSearchController,
-                       autofocus: true, // 開いたらすぐ入力状態に
+                       autofocus: true, 
                        decoration: InputDecoration(
                          hintText: '文字起こし内を検索...',
                          prefixIcon: const Icon(Icons.search, size: 20, color: Colors.grey),
-                         // 閉じるボタン
                          suffixIcon: IconButton(
                            icon: const Icon(Icons.close, size: 20, color: Colors.grey),
                            onPressed: () {
                              setState(() {
-                               _isSearchBarVisible = false; // 閉じる
-                               _localSearchController.clear(); // 文字を消す
-                               _currentSearchKeyword = ''; // 検索解除
+                               _isSearchBarVisible = false; 
+                               _localSearchController.clear(); 
+                               _currentSearchKeyword = ''; 
                              });
                            },
                          ),
@@ -1539,11 +1768,9 @@ Future<void> s3Upload(String title) async {
                        ),
                        style: const TextStyle(fontSize: 14),
                      )
-                   : // ■ 普段（ボタンのみ表示）
-                     Row(
-                       mainAxisAlignment: MainAxisAlignment.spaceBetween, // 左と右に離して配置
+                   : Row(
+                       mainAxisAlignment: MainAxisAlignment.spaceBetween, 
                        children: [
-                         // 1. 左側：検索ボタン
                          TextButton.icon(
                            onPressed: () {
                              setState(() => _isSearchBarVisible = true);
@@ -1555,17 +1782,27 @@ Future<void> s3Upload(String title) async {
                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                            ),
                          ),
-
-                         // 2. 右側：翻訳ボタン
-                         IconButton(
-                           icon: const Icon(Icons.translate),
-                           tooltip: '翻訳',
-                           onPressed: _isLoading ? null : () => _showTranslationDialog(recording),
+                         
+                         // 翻訳ボタン
+                         Row(
+                           children: [
+                             IconButton(
+                               icon: const Icon(Icons.translate),
+                               tooltip: '翻訳',
+                               onPressed: _isLoading ? null : () => _showTranslationDialog(recording),
+                             ),
+                             if (_isImage)
+                                IconButton(
+                                  icon: const Icon(Icons.refresh), 
+                                  tooltip: "再解析",
+                                  onPressed: () => _runGeminiTask(() => _geminiService.transcribeImage(File(recording.filePath)), recording),
+                                ),
+                           ],
                          ),
                        ],
                      ),
                ),
-               // 4. タブ切り替え (シンプルに見やすく)
+               // 4. タブ切り替え (HEADデザイン)
                Container(
                  decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.grey.shade300))),
                  child: Row(

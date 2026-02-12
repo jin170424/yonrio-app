@@ -28,6 +28,23 @@ class _RecordingScreenState extends State<RecordingScreen> {
   bool _isRecording = false;
   int _recordDuration = 0;
   Timer? _timer;
+  String? _currentUserId;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchUser();
+  }
+
+  Future<void> _fetchUser() async {
+    final userService = UserService();
+    final userId = await userService.getCurrentUserSub();
+    if (mounted) {
+      setState(() {
+        _currentUserId = userId;
+      });
+    }
+  }
 
   @override
   void dispose() {
@@ -50,6 +67,17 @@ class _RecordingScreenState extends State<RecordingScreen> {
   }
 
   Future<void> _startRecording() async {
+    if (_currentUserId == null) {
+      await _fetchUser();
+      if (_currentUserId == null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('ユーザー情報の取得に失敗しました。再ログインしてください。')),
+        );
+        return;
+      }
+    }
+
     try {
       if (await _audioRecorder.hasPermission()) {
         final directory = await getApplicationDocumentsDirectory();
@@ -85,6 +113,13 @@ class _RecordingScreenState extends State<RecordingScreen> {
     });
 
     if (path != null) {
+      if (_currentUserId == null) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('ユーザーIDが見つかりません。保存できませんでした。')),
+        );
+        return;
+      }
       final ownerName = await UserService().getPreferredUsername();
       // await _saveToIsar(path, _recordDuration);
       final dio = Dio();
@@ -92,6 +127,7 @@ class _RecordingScreenState extends State<RecordingScreen> {
         filePath: path,
         duration: _recordDuration, 
         ownerName: ownerName ?? 'unknown_user',
+        ownerId: _currentUserId!,
         );
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

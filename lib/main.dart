@@ -13,6 +13,7 @@ import 'package:voice_app/models/transcript_segment.dart';
 import 'package:voice_app/screens/home_screen.dart'; 
 import 'package:voice_app/screens/login_screen.dart';
 import 'package:voice_app/models/recording.dart'; // DBの設計図
+import 'package:voice_app/services/processing_service.dart';
 import 'package:voice_app/services/user_service.dart';
 
 //amplify config
@@ -24,6 +25,7 @@ import 'package:internet_connection_checker_plus/internet_connection_checker_plu
 import 'services/network_service.dart';
 
 late Isar isar;
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 
 // アプリのスタート地点
 void main() async {
@@ -48,6 +50,7 @@ void main() async {
   NetworkService().initialize();
 
   await _configureAmplify();
+  await ProcessingService().initNotifications();
 
   // 準備ができたらアプリを画面に描画開始
   runApp(const MyApp());
@@ -122,6 +125,8 @@ class _MyAppState extends State<MyApp> {
       // アプリのタイトル（Androidのタスク一覧などに表示される）
       title: '文字起こしアプリ',
       debugShowCheckedModeBanner: false,
+      navigatorKey: navigatorKey,
+      scaffoldMessengerKey: rootScaffoldMessengerKey,
       // --- 日本語化の設定 ---
       localizationsDelegates: const [
         GlobalMaterialLocalizations.delegate,
