@@ -603,7 +603,6 @@ class _HomeScreenState extends State<HomeScreen> {
           ..lastSyncTime = DateTime.fromMillisecondsSinceEpoch(0)
           ..ownerName = ownerName
           ..ownerId = _currentUserId
-          ..remoteId = _generateUniqueId()
           ..status = 'pending';
 
         await isar.writeTxn(() async {
