@@ -32,90 +32,95 @@ const RecordingSchema = CollectionSchema(
       name: r'filePath',
       type: IsarType.string,
     ),
-    r'lastSyncTime': PropertySchema(
+    r'isFavorite': PropertySchema(
       id: 3,
+      name: r'isFavorite',
+      type: IsarType.bool,
+    ),
+    r'lastSyncTime': PropertySchema(
+      id: 4,
       name: r'lastSyncTime',
       type: IsarType.dateTime,
     ),
     r'needsCloudDelete': PropertySchema(
-      id: 4,
+      id: 5,
       name: r'needsCloudDelete',
       type: IsarType.bool,
     ),
     r'needsCloudUpdate': PropertySchema(
-      id: 5,
+      id: 6,
       name: r'needsCloudUpdate',
       type: IsarType.bool,
     ),
     r'originalLanguage': PropertySchema(
-      id: 6,
+      id: 7,
       name: r'originalLanguage',
       type: IsarType.string,
     ),
     r'ownerId': PropertySchema(
-      id: 7,
+      id: 8,
       name: r'ownerId',
       type: IsarType.string,
     ),
     r'ownerName': PropertySchema(
-      id: 8,
+      id: 9,
       name: r'ownerName',
       type: IsarType.string,
     ),
     r'remoteId': PropertySchema(
-      id: 9,
+      id: 10,
       name: r'remoteId',
       type: IsarType.string,
     ),
     r's3AudioUrl': PropertySchema(
-      id: 10,
+      id: 11,
       name: r's3AudioUrl',
       type: IsarType.string,
     ),
     r's3TranscriptJsonUrl': PropertySchema(
-      id: 11,
+      id: 12,
       name: r's3TranscriptJsonUrl',
       type: IsarType.string,
     ),
     r'sharedWith': PropertySchema(
-      id: 12,
+      id: 13,
       name: r'sharedWith',
       type: IsarType.objectList,
       target: r'SharedUser',
     ),
     r'sourceOriginalId': PropertySchema(
-      id: 13,
+      id: 14,
       name: r'sourceOriginalId',
       type: IsarType.string,
     ),
     r'status': PropertySchema(
-      id: 14,
+      id: 15,
       name: r'status',
       type: IsarType.string,
     ),
     r'summary': PropertySchema(
-      id: 15,
+      id: 16,
       name: r'summary',
       type: IsarType.string,
     ),
     r'summaryTranslations': PropertySchema(
-      id: 16,
+      id: 17,
       name: r'summaryTranslations',
       type: IsarType.objectList,
       target: r'TranslationData',
     ),
     r'title': PropertySchema(
-      id: 17,
+      id: 18,
       name: r'title',
       type: IsarType.string,
     ),
     r'transcription': PropertySchema(
-      id: 18,
+      id: 19,
       name: r'transcription',
       type: IsarType.string,
     ),
     r'updatedAt': PropertySchema(
-      id: 19,
+      id: 20,
       name: r'updatedAt',
       type: IsarType.dateTime,
     )
@@ -129,8 +134,8 @@ const RecordingSchema = CollectionSchema(
     r'remoteId': IndexSchema(
       id: 6301175856541681032,
       name: r'remoteId',
-      unique: true,
-      replace: true,
+      unique: false,
+      replace: false,
       properties: [
         IndexPropertySchema(
           name: r'remoteId',
@@ -326,33 +331,34 @@ void _recordingSerialize(
   writer.writeDateTime(offsets[0], object.createdAt);
   writer.writeLong(offsets[1], object.durationSeconds);
   writer.writeString(offsets[2], object.filePath);
-  writer.writeDateTime(offsets[3], object.lastSyncTime);
-  writer.writeBool(offsets[4], object.needsCloudDelete);
-  writer.writeBool(offsets[5], object.needsCloudUpdate);
-  writer.writeString(offsets[6], object.originalLanguage);
-  writer.writeString(offsets[7], object.ownerId);
-  writer.writeString(offsets[8], object.ownerName);
-  writer.writeString(offsets[9], object.remoteId);
-  writer.writeString(offsets[10], object.s3AudioUrl);
-  writer.writeString(offsets[11], object.s3TranscriptJsonUrl);
+  writer.writeBool(offsets[3], object.isFavorite);
+  writer.writeDateTime(offsets[4], object.lastSyncTime);
+  writer.writeBool(offsets[5], object.needsCloudDelete);
+  writer.writeBool(offsets[6], object.needsCloudUpdate);
+  writer.writeString(offsets[7], object.originalLanguage);
+  writer.writeString(offsets[8], object.ownerId);
+  writer.writeString(offsets[9], object.ownerName);
+  writer.writeString(offsets[10], object.remoteId);
+  writer.writeString(offsets[11], object.s3AudioUrl);
+  writer.writeString(offsets[12], object.s3TranscriptJsonUrl);
   writer.writeObjectList<SharedUser>(
-    offsets[12],
+    offsets[13],
     allOffsets,
     SharedUserSchema.serialize,
     object.sharedWith,
   );
-  writer.writeString(offsets[13], object.sourceOriginalId);
-  writer.writeString(offsets[14], object.status);
-  writer.writeString(offsets[15], object.summary);
+  writer.writeString(offsets[14], object.sourceOriginalId);
+  writer.writeString(offsets[15], object.status);
+  writer.writeString(offsets[16], object.summary);
   writer.writeObjectList<TranslationData>(
-    offsets[16],
+    offsets[17],
     allOffsets,
     TranslationDataSchema.serialize,
     object.summaryTranslations,
   );
-  writer.writeString(offsets[17], object.title);
-  writer.writeString(offsets[18], object.transcription);
-  writer.writeDateTime(offsets[19], object.updatedAt);
+  writer.writeString(offsets[18], object.title);
+  writer.writeString(offsets[19], object.transcription);
+  writer.writeDateTime(offsets[20], object.updatedAt);
 }
 
 Recording _recordingDeserialize(
@@ -366,33 +372,34 @@ Recording _recordingDeserialize(
   object.durationSeconds = reader.readLong(offsets[1]);
   object.filePath = reader.readString(offsets[2]);
   object.id = id;
-  object.lastSyncTime = reader.readDateTimeOrNull(offsets[3]);
-  object.needsCloudDelete = reader.readBool(offsets[4]);
-  object.needsCloudUpdate = reader.readBool(offsets[5]);
-  object.originalLanguage = reader.readStringOrNull(offsets[6]);
-  object.ownerId = reader.readStringOrNull(offsets[7]);
-  object.ownerName = reader.readString(offsets[8]);
-  object.remoteId = reader.readStringOrNull(offsets[9]);
-  object.s3AudioUrl = reader.readStringOrNull(offsets[10]);
-  object.s3TranscriptJsonUrl = reader.readStringOrNull(offsets[11]);
+  object.isFavorite = reader.readBool(offsets[3]);
+  object.lastSyncTime = reader.readDateTimeOrNull(offsets[4]);
+  object.needsCloudDelete = reader.readBool(offsets[5]);
+  object.needsCloudUpdate = reader.readBool(offsets[6]);
+  object.originalLanguage = reader.readStringOrNull(offsets[7]);
+  object.ownerId = reader.readStringOrNull(offsets[8]);
+  object.ownerName = reader.readString(offsets[9]);
+  object.remoteId = reader.readStringOrNull(offsets[10]);
+  object.s3AudioUrl = reader.readStringOrNull(offsets[11]);
+  object.s3TranscriptJsonUrl = reader.readStringOrNull(offsets[12]);
   object.sharedWith = reader.readObjectList<SharedUser>(
-    offsets[12],
+    offsets[13],
     SharedUserSchema.deserialize,
     allOffsets,
     SharedUser(),
   );
-  object.sourceOriginalId = reader.readStringOrNull(offsets[13]);
-  object.status = reader.readStringOrNull(offsets[14]);
-  object.summary = reader.readStringOrNull(offsets[15]);
+  object.sourceOriginalId = reader.readStringOrNull(offsets[14]);
+  object.status = reader.readStringOrNull(offsets[15]);
+  object.summary = reader.readStringOrNull(offsets[16]);
   object.summaryTranslations = reader.readObjectList<TranslationData>(
-    offsets[16],
+    offsets[17],
     TranslationDataSchema.deserialize,
     allOffsets,
     TranslationData(),
   );
-  object.title = reader.readString(offsets[17]);
-  object.transcription = reader.readStringOrNull(offsets[18]);
-  object.updatedAt = reader.readDateTime(offsets[19]);
+  object.title = reader.readString(offsets[18]);
+  object.transcription = reader.readStringOrNull(offsets[19]);
+  object.updatedAt = reader.readDateTime(offsets[20]);
   return object;
 }
 
@@ -410,48 +417,50 @@ P _recordingDeserializeProp<P>(
     case 2:
       return (reader.readString(offset)) as P;
     case 3:
-      return (reader.readDateTimeOrNull(offset)) as P;
-    case 4:
       return (reader.readBool(offset)) as P;
+    case 4:
+      return (reader.readDateTimeOrNull(offset)) as P;
     case 5:
       return (reader.readBool(offset)) as P;
     case 6:
-      return (reader.readStringOrNull(offset)) as P;
+      return (reader.readBool(offset)) as P;
     case 7:
       return (reader.readStringOrNull(offset)) as P;
     case 8:
-      return (reader.readString(offset)) as P;
-    case 9:
       return (reader.readStringOrNull(offset)) as P;
+    case 9:
+      return (reader.readString(offset)) as P;
     case 10:
       return (reader.readStringOrNull(offset)) as P;
     case 11:
       return (reader.readStringOrNull(offset)) as P;
     case 12:
+      return (reader.readStringOrNull(offset)) as P;
+    case 13:
       return (reader.readObjectList<SharedUser>(
         offset,
         SharedUserSchema.deserialize,
         allOffsets,
         SharedUser(),
       )) as P;
-    case 13:
-      return (reader.readStringOrNull(offset)) as P;
     case 14:
       return (reader.readStringOrNull(offset)) as P;
     case 15:
       return (reader.readStringOrNull(offset)) as P;
     case 16:
+      return (reader.readStringOrNull(offset)) as P;
+    case 17:
       return (reader.readObjectList<TranslationData>(
         offset,
         TranslationDataSchema.deserialize,
         allOffsets,
         TranslationData(),
       )) as P;
-    case 17:
-      return (reader.readString(offset)) as P;
     case 18:
-      return (reader.readStringOrNull(offset)) as P;
+      return (reader.readString(offset)) as P;
     case 19:
+      return (reader.readStringOrNull(offset)) as P;
+    case 20:
       return (reader.readDateTime(offset)) as P;
     default:
       throw IsarError('Unknown property with id $propertyId');
@@ -470,61 +479,6 @@ void _recordingAttach(IsarCollection<dynamic> col, Id id, Recording object) {
   object.id = id;
   object.transcripts.attach(
       col, col.isar.collection<TranscriptSegment>(), r'transcripts', id);
-}
-
-extension RecordingByIndex on IsarCollection<Recording> {
-  Future<Recording?> getByRemoteId(String? remoteId) {
-    return getByIndex(r'remoteId', [remoteId]);
-  }
-
-  Recording? getByRemoteIdSync(String? remoteId) {
-    return getByIndexSync(r'remoteId', [remoteId]);
-  }
-
-  Future<bool> deleteByRemoteId(String? remoteId) {
-    return deleteByIndex(r'remoteId', [remoteId]);
-  }
-
-  bool deleteByRemoteIdSync(String? remoteId) {
-    return deleteByIndexSync(r'remoteId', [remoteId]);
-  }
-
-  Future<List<Recording?>> getAllByRemoteId(List<String?> remoteIdValues) {
-    final values = remoteIdValues.map((e) => [e]).toList();
-    return getAllByIndex(r'remoteId', values);
-  }
-
-  List<Recording?> getAllByRemoteIdSync(List<String?> remoteIdValues) {
-    final values = remoteIdValues.map((e) => [e]).toList();
-    return getAllByIndexSync(r'remoteId', values);
-  }
-
-  Future<int> deleteAllByRemoteId(List<String?> remoteIdValues) {
-    final values = remoteIdValues.map((e) => [e]).toList();
-    return deleteAllByIndex(r'remoteId', values);
-  }
-
-  int deleteAllByRemoteIdSync(List<String?> remoteIdValues) {
-    final values = remoteIdValues.map((e) => [e]).toList();
-    return deleteAllByIndexSync(r'remoteId', values);
-  }
-
-  Future<Id> putByRemoteId(Recording object) {
-    return putByIndex(r'remoteId', object);
-  }
-
-  Id putByRemoteIdSync(Recording object, {bool saveLinks = true}) {
-    return putByIndexSync(r'remoteId', object, saveLinks: saveLinks);
-  }
-
-  Future<List<Id>> putAllByRemoteId(List<Recording> objects) {
-    return putAllByIndex(r'remoteId', objects);
-  }
-
-  List<Id> putAllByRemoteIdSync(List<Recording> objects,
-      {bool saveLinks = true}) {
-    return putAllByIndexSync(r'remoteId', objects, saveLinks: saveLinks);
-  }
 }
 
 extension RecordingQueryWhereSort
@@ -1533,6 +1487,16 @@ extension RecordingQueryFilter
         includeLower: includeLower,
         upper: upper,
         includeUpper: includeUpper,
+      ));
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterFilterCondition> isFavoriteEqualTo(
+      bool value) {
+    return QueryBuilder.apply(this, (query) {
+      return query.addFilterCondition(FilterCondition.equalTo(
+        property: r'isFavorite',
+        value: value,
       ));
     });
   }
@@ -3633,6 +3597,18 @@ extension RecordingQuerySortBy on QueryBuilder<Recording, Recording, QSortBy> {
     });
   }
 
+  QueryBuilder<Recording, Recording, QAfterSortBy> sortByIsFavorite() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'isFavorite', Sort.asc);
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterSortBy> sortByIsFavoriteDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'isFavorite', Sort.desc);
+    });
+  }
+
   QueryBuilder<Recording, Recording, QAfterSortBy> sortByLastSyncTime() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'lastSyncTime', Sort.asc);
@@ -3869,6 +3845,18 @@ extension RecordingQuerySortThenBy
     });
   }
 
+  QueryBuilder<Recording, Recording, QAfterSortBy> thenByIsFavorite() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'isFavorite', Sort.asc);
+    });
+  }
+
+  QueryBuilder<Recording, Recording, QAfterSortBy> thenByIsFavoriteDesc() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addSortBy(r'isFavorite', Sort.desc);
+    });
+  }
+
   QueryBuilder<Recording, Recording, QAfterSortBy> thenByLastSyncTime() {
     return QueryBuilder.apply(this, (query) {
       return query.addSortBy(r'lastSyncTime', Sort.asc);
@@ -4076,6 +4064,12 @@ extension RecordingQueryWhereDistinct
     });
   }
 
+  QueryBuilder<Recording, Recording, QDistinct> distinctByIsFavorite() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addDistinctBy(r'isFavorite');
+    });
+  }
+
   QueryBuilder<Recording, Recording, QDistinct> distinctByLastSyncTime() {
     return QueryBuilder.apply(this, (query) {
       return query.addDistinctBy(r'lastSyncTime');
@@ -4205,6 +4199,12 @@ extension RecordingQueryProperty
   QueryBuilder<Recording, String, QQueryOperations> filePathProperty() {
     return QueryBuilder.apply(this, (query) {
       return query.addPropertyName(r'filePath');
+    });
+  }
+
+  QueryBuilder<Recording, bool, QQueryOperations> isFavoriteProperty() {
+    return QueryBuilder.apply(this, (query) {
+      return query.addPropertyName(r'isFavorite');
     });
   }
 

@@ -11,7 +11,7 @@ class Recording {
   Id id = Isar.autoIncrement;
 
   // DynamoDBのid(UUID)
-  @Index(unique: true, replace:true)
+  @Index()
   String? remoteId;
 
   @Index()
@@ -53,6 +53,8 @@ class Recording {
   // 文字起こしテキスト全文
   @Index(type: IndexType.value)
   String? transcription;
+
+  bool isFavorite = false;
 
   // AI要約
   String? summary;
