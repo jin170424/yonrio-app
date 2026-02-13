@@ -806,7 +806,7 @@ class _ResultScreenState extends State<ResultScreen> {
             if (updateGlobalUI) {
               setState(() {
                 _currentDisplayLanguage = targetLang; // 自動で切り替え
-                _currentMode = DisplayMode.transcription;
+                // _currentMode = DisplayMode.transcription;
               });
             }
             
@@ -912,9 +912,9 @@ class _ResultScreenState extends State<ResultScreen> {
                 Navigator.pop(context);
                 _updateSegmentLanguage(index, 'original');
               },
-              child: const Padding(
-                padding: EdgeInsets.symmetric(vertical: 8.0),
-                child: Text('原文を表示', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold))
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8.0),
+                child: Text('原文 ($originName)', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold))
               ),
             ),
             const Divider(),
@@ -995,7 +995,7 @@ class _ResultScreenState extends State<ResultScreen> {
       // すでにある場合は切り替えだけ
       setState(() {
         _currentDisplayLanguage = langCode;
-        _currentMode = DisplayMode.transcription;
+        // _currentMode = DisplayMode.transcription;
       });
       ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('$langName に切り替えました')));
       return;
@@ -1431,6 +1431,7 @@ class _ResultScreenState extends State<ResultScreen> {
     final bool isTranslateMode = currentLang != 'original';
 
     String contentText = "";
+    bool isTranslated = false;
 
     if (isTranslateMode) {
       // 翻訳データを探す
@@ -1441,6 +1442,7 @@ class _ResultScreenState extends State<ResultScreen> {
 
       if (translation != null && translation.text != null && translation.text!.isNotEmpty) {
         contentText = translation.text!;
+        isTranslated = true;
       } else {
         // 翻訳データがまだ無い場合（原文フォールバック + 注釈）
         contentText = "${recording.summary ?? '要約なし'}\n\n(※この言語の要約翻訳はまだありません)";
@@ -1455,7 +1457,7 @@ class _ResultScreenState extends State<ResultScreen> {
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           // 編集ボタン（表示モードかつデータがある場合）
-          if (_isOwner && !_isEditingSummary && !_isProcessing)
+          if (_isOwner && !_isEditingSummary && !_isProcessing && !isTranslateMode)
             Padding(
               padding: const EdgeInsets.only(top: 8, right: 16),
               child: TextButton.icon(
@@ -1474,7 +1476,9 @@ class _ResultScreenState extends State<ResultScreen> {
               margin: const EdgeInsets.only(left: 16, right: 16, bottom:16, top:8),
               padding: const EdgeInsets.all(16),
               decoration: BoxDecoration(
-                color: _isEditingSummary ? Colors.white : Colors.orange.withOpacity(0.05),
+              color: isTranslateMode 
+                  ? Colors.indigo.withOpacity(0.05) 
+                  : (_isEditingSummary ? Colors.white : Colors.orange.withOpacity(0.05)),
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(
                     color: _isEditingSummary ? Colors.blue : Colors.orange.withOpacity(0.2),
@@ -1527,10 +1531,28 @@ class _ResultScreenState extends State<ResultScreen> {
                     )
                   ],
                 )
-              : Text(
-                contentText,
-                style: const TextStyle(fontSize: 16, height: 1.5),
-              ),
+              : Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      // 言語ラベル（翻訳時のみ表示）
+                      if (isTranslateMode)
+                        Padding(
+                          padding: const EdgeInsets.only(bottom: 8.0),
+                          child: Text(
+                            "【${_getLanguageName(currentLang)}】",
+                            style: TextStyle(
+                              fontSize: 12, 
+                              fontWeight: FontWeight.bold, 
+                              color: Colors.indigo.shade300
+                            ),
+                          ),
+                        ),
+                      Text(
+                        contentText,
+                        style: const TextStyle(fontSize: 16, height: 1.5),
+                      ),
+                    ],
+                  ),
             ),
         ],
       ),
